@@ -1663,8 +1663,8 @@ def index() -> str:
 
     function buildApiUrlCandidates(endpointPath) {
       const cleanEndpoint = String(endpointPath || "")
-        .replace(/^\/+/, "")
-        .replace(/\/+/g, "/");
+        .replace(/^\\/+/, "")
+        .replace(/\\/+/g, "/");
       if (!cleanEndpoint) {
         return ["/"];
       }
