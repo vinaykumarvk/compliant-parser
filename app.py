@@ -777,6 +777,21 @@ def index() -> str:
       font-size: 0.72rem;
       white-space: nowrap;
     }
+    .data-table th[data-col="transaction_type"],
+    .data-table th[data-col="confidence_score"],
+    .data-table th[data-col="requires_review"] {
+      white-space: normal;
+      min-width: 80px;
+    }
+    .data-table th[data-col="fund_name"],
+    .data-table td[data-col="fund_name"] {
+      min-width: 200px;
+    }
+    .data-table th[data-col="amount"],
+    .data-table td[data-col="amount"] {
+      min-width: 130px;
+      white-space: nowrap;
+    }
     .data-table tbody tr:last-child td {
       border-bottom: none;
     }
@@ -1813,12 +1828,12 @@ def index() -> str:
         .forEach((column) => columns.push(column));
 
       const headerHtml = columns
-        .map((column) => "<th scope=\\"col\\">" + escapeHtml(formatColumnLabel(column)) + "</th>")
+        .map((column) => "<th scope=\\"col\\" data-col=\\"" + escapeHtml(column) + "\\">" + escapeHtml(formatColumnLabel(column)) + "</th>")
         .join("");
       const bodyHtml = rows
         .map((row) => {
           const cells = columns
-            .map((column) => "<td>" + escapeHtml(formatCellValue(row && row[column])) + "</td>")
+            .map((column) => "<td data-col=\\"" + escapeHtml(column) + "\\">" + escapeHtml(formatCellValue(row && row[column])) + "</td>")
             .join("");
           return "<tr>" + cells + "</tr>";
         })
