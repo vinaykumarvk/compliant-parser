@@ -1,0 +1,6 @@
+fastapi>=0.129.0,<1.0.0
+uvicorn[standard]>=0.41.0,<1.0.0
+python-multipart>=0.0.20,<1.0.0
+google-cloud-documentai>=3.10.0,<4.0.0
+google-cloud-storage>=3.9.0,<4.0.0
+azure-storage-blob>=12.28.0,<13.0.0
