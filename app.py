@@ -595,6 +595,27 @@ def index() -> str:
       display: flex;
       gap: var(--space-2);
       flex-wrap: wrap;
+      align-items: center;
+    }
+    .push-processing-wrap {
+      position: relative;
+      display: inline-flex;
+    }
+    .push-processing-wrap[data-tooltip]:hover::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--color-surface-alt);
+      color: var(--color-text-muted);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      padding: 0.28rem 0.6rem;
+      font-size: 0.72rem;
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 10;
     }
     .btn {
       border: 1px solid transparent;
@@ -1179,6 +1200,9 @@ def index() -> str:
             <button id="bulkStopBtn" class="btn btn-secondary" type="button">Stop After Current</button>
             <button id="bulkRetryFailedBtn" class="btn btn-secondary" type="button">Retry Failed</button>
             <button id="bulkDownloadBtn" class="btn btn-secondary" type="button">Download Combined JSON</button>
+            <span class="push-processing-wrap" data-tooltip="Destination not configured">
+              <button class="btn btn-secondary" type="button" disabled aria-disabled="true">Push for Processing</button>
+            </span>
           </div>
           <div id="bulkSummary" class="summary-strip">No files queued yet.</div>
           <div class="bulk-grid">
