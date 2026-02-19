@@ -54,7 +54,6 @@ def get_doc_ai_config() -> dict:
     missing = [
         key
         for key in (
-            "GOOGLE_APPLICATION_CREDENTIALS",
             "DOC_AI_PROJECT_ID",
             "DOC_AI_LOCATION",
             "DOC_AI_PROCESSOR_ID",
