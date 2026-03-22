@@ -1,27 +1,40 @@
-# Intellect Document Parser App
+# Compliant Parser App
 
-This app lets you upload PDFs, process them through Google Document AI, and view parsed JSON with a PDF preview in the browser.
+This app ingests police complaint PDFs, runs OCR through Google Document AI, identifies the complaint language, optionally translates the OCR text into English, and extracts the complaint using the `5W + 1H` structure:
+
+- `Who`
+- `What`
+- `When`
+- `Where`
+- `Why`
+- `How`
+
+The current parser is designed for English, Hindi, and Telugu complaints, including handwritten complaints if your OCR processor supports them.
 
 ## 1. Install dependencies
 
 ```bash
-cd /Users/n15318/ta_doc_parser
+cd /Users/n15318/compliant-parser
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 2. Configure credentials and Document AI settings
+## 2. Configure credentials, OCR, and translation
 
 Create `.env` with:
 
 ```bash
-GOOGLE_APPLICATION_CREDENTIALS=/Users/n15318/Downloads/wealth-report-0f38071f8483.json
-DOC_AI_PROJECT_ID=wealth-report
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/your-service-account.json
+DOC_AI_PROJECT_ID=your-gcp-project-id
 DOC_AI_LOCATION=eu
-DOC_AI_PROCESSOR_ID=70b690b94894b43
+DOC_AI_PROCESSOR_ID=your-ocr-or-handwriting-processor-id
 DOC_AI_MIME_TYPE=application/pdf
-DOC_AI_FIELD_MASK=text,entities,fund name, amount
+DOC_AI_FIELD_MASK=text
+TRANSLATION_ENABLED=true
+TRANSLATION_PROJECT_ID=your-gcp-project-id
+TRANSLATION_LOCATION=global
+TRANSLATION_TARGET_LANGUAGE=en
 ```
 
 Optional:
@@ -32,6 +45,11 @@ AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=...;AccountName=...;Acc
 ```
 
 Note: if you run Docker with `--env-file`, keep values unquoted.
+
+Notes:
+
+- Use a Google Document AI OCR / handwriting-capable processor, not the old fund-specific processor.
+- Translation is only needed for non-English complaints. If translation is unavailable, the output will flag that in `gaps.pipeline_flags`.
 
 ## 3. Run the app
 
@@ -51,13 +69,13 @@ This repository includes a production-oriented Dockerfile that:
 Place the service account key at:
 
 ```bash
-credentials/wealth-report-0f38071f8483.json
+credentials/your-service-account.json
 ```
 
 Build image:
 
 ```bash
-docker build -t intellect-document-parser:local .
+docker build -t compliant-parser:local .
 ```
 
 Run container:
@@ -66,13 +84,17 @@ Run container:
 docker run --rm \
   -p 8080:8080 \
   -e PORT=8080 \
-  -e GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/wealth-report-0f38071f8483.json \
-  -e DOC_AI_PROJECT_ID=wealth-report \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/your-service-account.json \
+  -e DOC_AI_PROJECT_ID=your-gcp-project-id \
   -e DOC_AI_LOCATION=eu \
-  -e DOC_AI_PROCESSOR_ID=70b690b94894b43 \
+  -e DOC_AI_PROCESSOR_ID=your-ocr-or-handwriting-processor-id \
   -e DOC_AI_MIME_TYPE=application/pdf \
-  -e DOC_AI_FIELD_MASK="text,entities,fund name, amount" \
-  intellect-document-parser:local
+  -e DOC_AI_FIELD_MASK=text \
+  -e TRANSLATION_ENABLED=true \
+  -e TRANSLATION_PROJECT_ID=your-gcp-project-id \
+  -e TRANSLATION_LOCATION=global \
+  -e TRANSLATION_TARGET_LANGUAGE=en \
+  compliant-parser:local
 ```
 
 Health check:
@@ -83,19 +105,16 @@ curl http://127.0.0.1:8080/health
 
 ## 5. Use the app
 
-1. In **Single File** mode (default):
-   - Choose one local PDF file.
-   - Click **Parse Document**.
-   - View parsed JSON output and PDF preview.
-2. In **Bulk Processing** mode:
-   - Select multiple PDF files (up to 20 files, max 15 MB each).
-   - Click **Start Bulk Run**.
-   - Monitor per-file status (`Queued`, `Processing`, `Success`, `Failed`) and retry failed items if needed.
-   - Select any processed file to inspect:
-     - extracted JSON on the left,
-     - source PDF preview on the right.
-   - Download all successful bulk results as one **combined JSON** file.
-   - Use **Push to GCS/Azure** to upload the combined JSON to cloud storage.
+1. Upload one or more police complaint PDFs.
+2. Start the bulk run.
+3. For each complaint, review:
+   - detected language
+   - translation status
+   - OCR text preview
+   - English text preview
+   - extracted `Who / What / When / Where / Why / How`
+   - gap analysis showing missing or uncertain fields
+4. Download the combined JSON when you want a file-level complaint coverage export.
 
 ## 6. Cloud push targets
 
@@ -109,6 +128,6 @@ curl http://127.0.0.1:8080/health
 ## 7. Runtime API endpoints
 
 - `GET /` - Upload UI
-- `POST /api/parse` - Parse uploaded PDF bytes and return parsed JSON
+- `POST /api/parse` - Parse uploaded PDF bytes and return complaint JSON
 - `POST /api/push-combined-json` - Push a combined JSON payload to GCS or Azure Blob
-- `GET /health` - Runtime config health check
+- `GET /health` - Runtime config health check, including translation settings

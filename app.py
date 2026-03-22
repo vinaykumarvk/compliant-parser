@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import json
 from pathlib import Path
@@ -5,11 +7,16 @@ from pathlib import Path
 from fastapi import Body, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from ta_doc_parsing import load_dotenv, parse_document, process_document_bytes
+from complaint_parsing import (
+    get_translation_config,
+    load_dotenv,
+    parse_document,
+    process_document_bytes,
+)
 
 load_dotenv()
 
-app = FastAPI(title="Intellect Document Parser", version="1.0.0")
+app = FastAPI(title="Compliant Parser", version="1.0.0")
 
 
 def _clean_env_value(value: str | None) -> str | None:
@@ -48,7 +55,7 @@ def get_doc_ai_config() -> dict:
         "DOC_AI_LOCATION": _get_env("DOC_AI_LOCATION"),
         "DOC_AI_PROCESSOR_ID": _get_env("DOC_AI_PROCESSOR_ID"),
         "DOC_AI_MIME_TYPE": _get_env("DOC_AI_MIME_TYPE", "application/pdf"),
-        "DOC_AI_FIELD_MASK": _get_env("DOC_AI_FIELD_MASK"),
+        "DOC_AI_FIELD_MASK": _get_env("DOC_AI_FIELD_MASK", "text"),
     }
 
     missing = [
@@ -164,7 +171,7 @@ def index() -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Intellect Document Parser</title>
+  <title>Compliant Parser</title>
   <style>
     :root {
       color-scheme: light;
@@ -798,14 +805,28 @@ def index() -> str:
       font-size: 0.72rem;
       white-space: nowrap;
     }
-    .data-table th[data-col="transaction_type"],
     .data-table th[data-col="confidence_score"],
-    .data-table th[data-col="requires_review"] {
+    .data-table th[data-col="requires_review"],
+    .data-table th[data-col="who"],
+    .data-table th[data-col="what"],
+    .data-table th[data-col="when"],
+    .data-table th[data-col="where"],
+    .data-table th[data-col="why"],
+    .data-table th[data-col="how"],
+    .data-table th[data-col="status"] {
       white-space: normal;
       min-width: 80px;
     }
-    .data-table th[data-col="fund_name"],
-    .data-table td[data-col="fund_name"] {
+    .data-table th[data-col="value"],
+    .data-table td[data-col="value"],
+    .data-table th[data-col="preview"],
+    .data-table td[data-col="preview"],
+    .data-table th[data-col="evidence"],
+    .data-table td[data-col="evidence"],
+    .data-table th[data-col="missing_fields"],
+    .data-table td[data-col="missing_fields"],
+    .data-table th[data-col="uncertain_fields"],
+    .data-table td[data-col="uncertain_fields"] {
       min-width: 200px;
     }
     .data-table th[data-col="amount"],
@@ -1120,8 +1141,8 @@ def index() -> str:
   <div id="loginScreen" class="login-screen">
     <section class="login-card" aria-labelledby="loginTitle">
       <div class="login-heading">
-        <h2 id="loginTitle">Intellect Document Parser</h2>
-        <p>Sign in to continue to your document extraction workspace.</p>
+        <h2 id="loginTitle">Compliant Parser</h2>
+        <p>Sign in to continue to your police complaint analysis workspace.</p>
       </div>
       <form id="loginForm" class="login-form">
         <label class="text-field" for="loginUser">
@@ -1156,8 +1177,8 @@ def index() -> str:
   <div id="appShell" class="app mode-hidden">
     <header class="topbar">
       <div class="brand">
-        <h1>Intellect Document Parser</h1>
-        <p>Upload, parse, and review documents from one full-screen workspace.</p>
+        <h1>Compliant Parser</h1>
+        <p>Upload, translate, and review police complaints from one full-screen workspace.</p>
       </div>
       <button id="themeToggle" class="icon-btn" type="button" aria-label="Toggle color theme" aria-pressed="false">
         <svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">
@@ -1183,7 +1204,7 @@ def index() -> str:
           </div>
           <div class="bulk-controls">
             <label class="file-field" for="bulkFileInput">
-              <span class="field-label">PDF Files</span>
+              <span class="field-label">Complaint PDFs</span>
               <input id="bulkFileInput" type="file" accept=".pdf,application/pdf" multiple />
             </label>
           </div>
@@ -1256,9 +1277,9 @@ def index() -> str:
   </div>
 
   <script>
-    const THEME_KEY = "intellect_document_parser_theme";
-    const APP_STATE_KEY = "intellect_document_parser_ui_state_v1";
-    const LOGIN_REMEMBERED_USER_KEY = "intellect_document_parser_demo_user";
+    const THEME_KEY = "compliant_parser_theme";
+    const APP_STATE_KEY = "compliant_parser_ui_state_v2";
+    const LOGIN_REMEMBERED_USER_KEY = "compliant_parser_demo_user";
     const DEMO_USER_ID = "user123";
     const DEMO_PASSWORD = "password123";
     const BULK_MAX_FILES = 20;
@@ -1311,7 +1332,7 @@ def index() -> str:
       bulkPreviewUrl: null,
       bulkPreviewJobId: null,
       lastStatus: {
-        message: "Select PDFs and click Start.",
+        message: "Select police complaint PDFs and click Start.",
         kind: "info"
       },
       network: {
@@ -1538,7 +1559,7 @@ def index() -> str:
       if (userValue === DEMO_USER_ID && passwordValue === DEMO_PASSWORD) {
         saveRememberedUser(userValue, rememberChecked);
         setAppAuthenticated(true);
-        setStatus("Login successful. Select PDFs and click Start.", "success");
+        setStatus("Login successful. Select police complaint PDFs and click Start.", "success");
         loginForm.reset();
         loginPassword.type = "password";
         togglePasswordBtn.textContent = "Show";
@@ -1804,7 +1825,7 @@ def index() -> str:
         return String(metricPath);
       }
 
-      const parts = rawParts[0] === "by_transaction_type" ? rawParts.slice(1) : rawParts;
+      const parts = rawParts;
       const labelParts = parts.map((part) => {
         const normalized = part.toLowerCase();
         if (normalized === "grand_total_amount") {
@@ -1899,68 +1920,69 @@ def index() -> str:
       return rows;
     }
 
-    function extractTotalsRows(totals) {
-      const byType = (totals && typeof totals.by_transaction_type === "object")
-        ? totals.by_transaction_type
-        : {};
-
-      function pickFirst(obj, keys) {
-        for (let i = 0; i < keys.length; i++) {
-          const val = obj && obj[keys[i]];
-          if (val !== undefined && val !== null && val !== "") {
-            return val;
-          }
-        }
-        return "-";
+    function formatScoreValue(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        return value === undefined || value === null || value === "" ? "-" : String(value);
       }
-
-      const sub = (byType.subscription && typeof byType.subscription === "object") ? byType.subscription : {};
-      const red = (byType.redemption && typeof byType.redemption === "object") ? byType.redemption : {};
-
-      return [
-        { description: "Total Subscription Units", value: pickFirst(sub, ["grand_total_units", "total_by_fund_units", "total_units"]) },
-        { description: "Total Subscription Amount", value: pickFirst(sub, ["grand_total_amount", "subscription_total_amount", "total_by_fund_amount"]) },
-        { description: "Total Redemption Units", value: pickFirst(red, ["grand_total_units", "total_by_fund_units", "total_units"]) },
-        { description: "Total Redemption Amount", value: pickFirst(red, ["grand_total_amount", "redemption_total_amount", "total_by_fund_amount"]) }
-      ];
+      return numeric.toFixed(2);
     }
 
-    function buildCanonicalTransactionRow(item, defaultType, extraFields) {
-      const source = item && typeof item === "object" ? item : {};
-      const pickValue = (value) => (value === undefined || value === "" ? null : value);
-      const pickScore = (value) => {
-        if (value === undefined || value === null || value === "") {
-          return null;
-        }
-        const numeric = Number(value);
-        if (Number.isFinite(numeric)) {
-          return numeric.toFixed(2);
-        }
-        return String(value);
-      };
-      const normalizeFlags = (value) => {
-        if (Array.isArray(value)) {
-          return value
-            .map((item) => String(item || "").trim())
-            .filter((item) => item.length > 0);
-        }
-        if (value === undefined || value === null || value === "") {
-          return [];
-        }
-        return [String(value)];
-      };
+    function toYesNoValue(value) {
+      if (value === true) {
+        return "Yes";
+      }
+      if (value === false) {
+        return "No";
+      }
+      return value === undefined || value === null || value === "" ? "-" : String(value);
+    }
+
+    function truncateText(value, maxLength) {
+      const text = value === undefined || value === null ? "" : String(value).trim();
+      if (!text) {
+        return null;
+      }
+      if (text.length <= maxLength) {
+        return text;
+      }
+      return text.slice(0, maxLength - 1) + "…";
+    }
+
+    function getComplaintField(parsedOutput, fieldName) {
+      const complaint = parsedOutput && typeof parsedOutput.complaint === "object"
+        ? parsedOutput.complaint
+        : {};
+      const field = complaint && typeof complaint[fieldName] === "object"
+        ? complaint[fieldName]
+        : {};
+      return field || {};
+    }
+
+    function buildComplaintCoverageRow(parsedOutput, extraFields) {
+      const language = parsedOutput && typeof parsedOutput.language === "object"
+        ? parsedOutput.language
+        : {};
+      const gaps = parsedOutput && typeof parsedOutput.gaps === "object"
+        ? parsedOutput.gaps
+        : {};
+      const confidence = parsedOutput && typeof parsedOutput.confidence === "object"
+        ? parsedOutput.confidence
+        : {};
       const row = {
-        transaction_type: source.transaction_type || defaultType || "Unknown",
-        fund_name: pickValue(source.fund_name),
-        units: pickValue(source.units),
-        amount: pickValue(source.amount),
-        confidence_score: pickScore(source.confidence_score),
-        requires_review: source.requires_review === true
-          ? "Yes"
-          : source.requires_review === false
-            ? "No"
-            : null,
-        exception_flags: normalizeFlags(source.exception_flags)
+        detected_language: language.detected_name || language.detected || "-",
+        translation_status: language.translation_status || "-",
+        who: getComplaintField(parsedOutput, "who").status || "missing",
+        what: getComplaintField(parsedOutput, "what").status || "missing",
+        when: getComplaintField(parsedOutput, "when").status || "missing",
+        where: getComplaintField(parsedOutput, "where").status || "missing",
+        why: getComplaintField(parsedOutput, "why").status || "missing",
+        how: getComplaintField(parsedOutput, "how").status || "missing",
+        missing_fields: Array.isArray(gaps.missing_fields) ? gaps.missing_fields : [],
+        uncertain_fields: Array.isArray(gaps.uncertain_fields) ? gaps.uncertain_fields : [],
+        completeness_score: formatScoreValue(gaps.completeness_score),
+        average_confidence: formatScoreValue(confidence.average_score),
+        requires_review: toYesNoValue(gaps.requires_review)
       };
       if (extraFields && typeof extraFields === "object") {
         Object.keys(extraFields).forEach((key) => {
@@ -1970,37 +1992,116 @@ def index() -> str:
       return row;
     }
 
-    function extractTransactionRows(parsedOutput, extraFields) {
-      const rows = [];
-      if (!parsedOutput || typeof parsedOutput !== "object") {
-        return rows;
-      }
+    function extractComplaintFieldRows(parsedOutput) {
+      return ["who", "what", "when", "where", "why", "how"].map((fieldName) => {
+        const field = getComplaintField(parsedOutput, fieldName);
+        return {
+          field: toReadableMetricLabel(fieldName),
+          status: field.status || "missing",
+          value: field.value || null,
+          confidence_score: formatScoreValue(field.confidence_score),
+          evidence: Array.isArray(field.evidence) ? field.evidence : []
+        };
+      });
+    }
 
-      const appendRow = (item, defaultType) => {
-        rows.push(buildCanonicalTransactionRow(item, defaultType, extraFields));
-      };
+    function extractWhoComponentRows(parsedOutput) {
+      const whoField = getComplaintField(parsedOutput, "who");
+      const components = whoField && typeof whoField.components === "object"
+        ? whoField.components
+        : {};
+      return ["complainant", "victim", "accused", "witnesses"].map((role) => {
+        const component = components && typeof components[role] === "object"
+          ? components[role]
+          : {};
+        return {
+          role: toReadableMetricLabel(role),
+          status: component.status || "missing",
+          values: Array.isArray(component.values) ? component.values : [],
+          inferred: component.inferred === true
+            ? "Yes"
+            : component.inferred === false
+              ? "No"
+              : "-"
+        };
+      });
+    }
 
-      const summaries = Array.isArray(parsedOutput.transaction_summaries)
-        ? parsedOutput.transaction_summaries
-        : [];
-      if (summaries.length) {
-        summaries.forEach((summary) => {
-          const summaryType = summary && summary.transaction_type
-            ? summary.transaction_type
-            : parsedOutput.transaction_type || "Unknown";
-          const summaryRows = Array.isArray(summary && summary.transactions)
-            ? summary.transactions
-            : [];
-          summaryRows.forEach((item) => appendRow(item, summaryType));
-        });
-        return rows;
-      }
+    function extractWhenComponentRows(parsedOutput) {
+      const whenField = getComplaintField(parsedOutput, "when");
+      const components = whenField && typeof whenField.components === "object"
+        ? whenField.components
+        : {};
+      return ["date", "time"].map((part) => {
+        const component = components && typeof components[part] === "object"
+          ? components[part]
+          : {};
+        return {
+          component: toReadableMetricLabel(part),
+          status: component.status || "missing",
+          value: component.value || null
+        };
+      });
+    }
 
-      const transactions = Array.isArray(parsedOutput.transactions)
-        ? parsedOutput.transactions
-        : [];
-      transactions.forEach((item) => appendRow(item, parsedOutput.transaction_type || "Unknown"));
-      return rows;
+    function buildGapRows(parsedOutput) {
+      const gaps = parsedOutput && typeof parsedOutput.gaps === "object"
+        ? parsedOutput.gaps
+        : {};
+      const language = parsedOutput && typeof parsedOutput.language === "object"
+        ? parsedOutput.language
+        : {};
+      return [
+        { metric: "Available Fields", value: Array.isArray(gaps.available_fields) ? gaps.available_fields : [] },
+        { metric: "Missing Fields", value: Array.isArray(gaps.missing_fields) && gaps.missing_fields.length ? gaps.missing_fields : "None" },
+        { metric: "Uncertain Fields", value: Array.isArray(gaps.uncertain_fields) && gaps.uncertain_fields.length ? gaps.uncertain_fields : "None" },
+        { metric: "Pipeline Flags", value: Array.isArray(gaps.pipeline_flags) && gaps.pipeline_flags.length ? gaps.pipeline_flags : "None" },
+        { metric: "Completeness Score", value: formatScoreValue(gaps.completeness_score) },
+        { metric: "Requires Review", value: toYesNoValue(gaps.requires_review) },
+        { metric: "Gap Summary", value: gaps.summary || "-" },
+        { metric: "Translation Error", value: language.translation_error || "None" }
+      ];
+    }
+
+    function buildTextPreviewRows(parsedOutput) {
+      const text = parsedOutput && typeof parsedOutput.text === "object"
+        ? parsedOutput.text
+        : {};
+      return [
+        { source: "OCR Text", preview: truncateText(text.ocr_text, 320) || "-" },
+        { source: "English Text", preview: truncateText(text.english_text, 320) || "-" }
+      ];
+    }
+
+    function buildSelectedComplaintSummaryRows(selected, payload) {
+      const language = payload && typeof payload.language === "object"
+        ? payload.language
+        : {};
+      const gaps = payload && typeof payload.gaps === "object"
+        ? payload.gaps
+        : {};
+      const confidence = payload && typeof payload.confidence === "object"
+        ? payload.confidence
+        : {};
+      const meta = payload && typeof payload.meta === "object"
+        ? payload.meta
+        : {};
+      const assessment = meta && typeof meta.complaint_assessment === "object"
+        ? meta.complaint_assessment
+        : {};
+      return [
+        { field: "File Name", value: selected.name },
+        { field: "Status", value: selected.status },
+        { field: "Attempts", value: selected.attempts },
+        { field: "Document Type", value: payload.document_type || "-" },
+        { field: "Detected Language", value: language.detected_name || language.detected || "-" },
+        { field: "Translation Status", value: language.translation_status || "-" },
+        { field: "Translation Provider", value: language.translation_provider || "-" },
+        { field: "Completeness Score", value: formatScoreValue(gaps.completeness_score) },
+        { field: "Avg. Field Confidence", value: formatScoreValue(confidence.average_score) },
+        { field: "Requires Review", value: toYesNoValue(gaps.requires_review) },
+        { field: "Likely Police Complaint", value: toYesNoValue(assessment.likely_police_complaint) }
+      ];
     }
 
     function renderBulkResultTableView() {
@@ -2017,47 +2118,43 @@ def index() -> str:
           { field: "Failed Count", value: combinedPayload.failed_count || 0 }
         ];
 
-        let combinedRows = [];
         const resultItems = Array.isArray(combinedPayload.results) ? combinedPayload.results : [];
-        resultItems.forEach((item) => {
+        const combinedRows = resultItems.map((item) => {
           const parsedOutput = item && item.parsed_output ? item.parsed_output : null;
-          const rows = extractTransactionRows(parsedOutput, {
+          return buildComplaintCoverageRow(parsedOutput, {
             file_name: item ? item.file_name : null
           });
-          if (rows.length) {
-            combinedRows = combinedRows.concat(rows);
-          } else if (item) {
-            combinedRows.push({
-              file_name: item.file_name || null,
-              transaction_type: parsedOutput && parsedOutput.transaction_type ? parsedOutput.transaction_type : "Unknown",
-              fund_name: null,
-              units: null,
-              amount: null,
-              confidence_score: null,
-              requires_review: null,
-              exception_flags: []
-            });
-          }
         });
 
-        const combinedScores = combinedRows
-          .map((row) => Number(row && row.confidence_score))
+        const completenessScores = combinedRows
+          .map((row) => Number(row && row.completeness_score))
           .filter((value) => Number.isFinite(value));
-        const combinedAverageConfidence = combinedScores.length
-          ? (combinedScores.reduce((acc, value) => acc + value, 0) / combinedScores.length).toFixed(2)
-          : "-";
+        const confidenceScores = combinedRows
+          .map((row) => Number(row && row.average_confidence))
+          .filter((value) => Number.isFinite(value));
         summaryRows.push(
-          { field: "Avg. Confidence Score", value: combinedAverageConfidence }
+          {
+            field: "Avg. Completeness Score",
+            value: completenessScores.length
+              ? (completenessScores.reduce((acc, value) => acc + value, 0) / completenessScores.length).toFixed(2)
+              : "-"
+          },
+          {
+            field: "Avg. Field Confidence",
+            value: confidenceScores.length
+              ? (confidenceScores.reduce((acc, value) => acc + value, 0) / confidenceScores.length).toFixed(2)
+              : "-"
+          }
         );
 
         const failedRows = Array.isArray(combinedPayload.failed_files) ? combinedPayload.failed_files : [];
         bulkResultTableView.innerHTML =
           buildSectionTableHtml("Combined Summary", summaryRows, ["field", "value"], "No summary available.") +
           buildSectionTableHtml(
-            "Combined Transactions",
+            "Complaint Coverage",
             combinedRows,
-            ["file_name", "transaction_type", "fund_name", "units", "amount", "confidence_score", "requires_review", "exception_flags"],
-            "No transactions available in combined output."
+            ["file_name", "detected_language", "translation_status", "who", "what", "when", "where", "why", "how", "missing_fields", "uncertain_fields", "completeness_score", "average_confidence", "requires_review"],
+            "No complaint analysis available in combined output."
           ) +
           buildSectionTableHtml("Failed Files", failedRows, ["file_name", "error"], "No failed files.");
         return;
@@ -2074,29 +2171,44 @@ def index() -> str:
       }
 
       const payload = selected.result;
-      const confidence = payload && typeof payload.confidence === "object"
-        ? payload.confidence
-        : {};
-      const summaryRows = [
-        { field: "File Name", value: selected.name },
-        { field: "Status", value: selected.status },
-        { field: "Attempts", value: selected.attempts },
-        { field: "Transaction Type", value: payload.transaction_type || "-" },
-        { field: "Sender", value: payload.sender || "-" },
-        { field: "Booking Date", value: payload.booking_date || "-" },
-        { field: "Avg. Confidence Score", value: confidence.average_score ?? "-" }
-      ];
-      const transactionRows = extractTransactionRows(payload);
-      const totalsRows = extractTotalsRows(payload.totals);
+      const summaryRows = buildSelectedComplaintSummaryRows(selected, payload);
+      const complaintFieldRows = extractComplaintFieldRows(payload);
+      const whoComponentRows = extractWhoComponentRows(payload);
+      const whenComponentRows = extractWhenComponentRows(payload);
+      const gapRows = buildGapRows(payload);
+      const textPreviewRows = buildTextPreviewRows(payload);
       bulkResultTableView.innerHTML =
         buildSectionTableHtml("Selected File Summary", summaryRows, ["field", "value"], "No summary data.") +
         buildSectionTableHtml(
-          "Transactions",
-          transactionRows,
-          ["transaction_type", "fund_name", "units", "amount", "confidence_score", "requires_review", "exception_flags"],
-          "No transactions available."
+          "5W + 1H Fields",
+          complaintFieldRows,
+          ["field", "status", "value", "confidence_score", "evidence"],
+          "No complaint fields available."
         ) +
-        buildSectionTableHtml("Totals", totalsRows, ["description", "value"], "No totals available.");
+        buildSectionTableHtml(
+          "Who Components",
+          whoComponentRows,
+          ["role", "status", "values", "inferred"],
+          "No identified people available."
+        ) +
+        buildSectionTableHtml(
+          "When Components",
+          whenComponentRows,
+          ["component", "status", "value"],
+          "No incident timing details available."
+        ) +
+        buildSectionTableHtml(
+          "Gap Analysis",
+          gapRows,
+          ["metric", "value"],
+          "No gap analysis available."
+        ) +
+        buildSectionTableHtml(
+          "Text Preview",
+          textPreviewRows,
+          ["source", "preview"],
+          "No text preview available."
+        );
     }
 
     function setBulkResultSource(source) {
@@ -2374,7 +2486,7 @@ def index() -> str:
         return;
       }
       job.result = parsed;
-      job.message = "Parsed successfully (edited).";
+      job.message = "Complaint parsed successfully (edited).";
       state.bulk.editingJobId = null;
       renderBulkState();
       setStatus("Saved JSON edits for " + job.name + ".", "success");
@@ -2418,7 +2530,7 @@ def index() -> str:
         setStatus("No successful bulk results available to download.", "error");
         return;
       }
-      downloadJsonPayload(payload, "bulk_parsed_results.json");
+      downloadJsonPayload(payload, "bulk_complaint_results.json");
       setStatus("Combined JSON downloaded for bulk results.", "success");
     }
 
@@ -2579,7 +2691,7 @@ def index() -> str:
           const data = await requestParseFile(job.file);
           job.status = "success";
           job.result = data.parsed_output || data;
-          job.message = "Parsed successfully.";
+          job.message = "Complaint parsed successfully.";
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
           job.status = "failed";
@@ -2742,7 +2854,7 @@ def index() -> str:
         if (job.status !== "success" || !job.result) {
           return;
         }
-        const outputName = normalizePdfName(job.name) + "_parsed.json";
+        const outputName = normalizePdfName(job.name) + "_complaint_parsed.json";
         downloadJsonPayload(job.result, outputName);
         setStatus("Downloaded result for " + job.name + ".", "success");
       }
@@ -2785,12 +2897,20 @@ def health() -> JSONResponse:
             content={"status": "error", "detail": str(exc)},
         )
 
+    translation_config = get_translation_config()
+
     return JSONResponse(
         content={
             "status": "ok",
+            "parser_mode": "police_complaint",
             "project_id": config["DOC_AI_PROJECT_ID"],
             "location": config["DOC_AI_LOCATION"],
             "processor_id": config["DOC_AI_PROCESSOR_ID"],
+            "field_mask": config["DOC_AI_FIELD_MASK"],
+            "translation_enabled": translation_config["enabled"],
+            "translation_project_id": translation_config["project_id"],
+            "translation_location": translation_config["location"],
+            "translation_target_language": translation_config["target_language"],
         }
     )
 
