@@ -17,7 +17,7 @@ COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --upgrade pip setuptools wheel && \
     pip install -r /app/requirements.txt
 
-COPY app.py ta_doc_parsing.py README.md .env.example /app/
+COPY app.py complaint_parsing.py ta_doc_parsing.py README.md .env.example /app/
 
 RUN adduser --disabled-password --gecos "" --home /home/appuser appuser && \
     chown -R appuser:appuser /app
