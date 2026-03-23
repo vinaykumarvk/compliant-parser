@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+    ca-certificates libpq-dev gcc \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
@@ -17,7 +17,7 @@ COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --upgrade pip setuptools wheel && \
     pip install -r /app/requirements.txt
 
-COPY app.py complaint_parsing.py ta_doc_parsing.py README.md .env.example /app/
+COPY app.py complaint_parsing.py ta_doc_parsing.py database.py index.html /app/
 
 RUN adduser --disabled-password --gecos "" --home /home/appuser appuser && \
     chown -R appuser:appuser /app
@@ -25,5 +25,8 @@ RUN adduser --disabled-password --gecos "" --home /home/appuser appuser && \
 USER appuser
 
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8080}/health')" || exit 1
 
 CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}"]

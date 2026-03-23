@@ -5,3 +5,4 @@ __pycache__/
 .venv/
 credentials/*.json
 !credentials/.gitkeep
+.DS_Store
