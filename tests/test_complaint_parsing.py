@@ -1,13 +1,19 @@
+import json
 import os
 import re
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from complaint_parsing import (
+    _clean_ocr_noise,
     _detect_language,
+    _extract_complaint_insights_via_openai,
     _extract_location_fragment,
     _extract_method_fragment,
     _is_plausible_location,
+    _normalize_whitespace,
+    _resolve_translation_provider_sequence,
+    get_translation_config,
     parse_document,
 )
 
@@ -219,6 +225,12 @@ class ComplaintParsingTests(unittest.TestCase):
                 "OPENAI_EXTRACTION_REQUIRE_EVIDENCE",
                 "OPENAI_API_KEY",
                 "DOC_AI_PROJECT_ID",
+                "GEMINI_API_KEY",
+                "GEMINI_TRANSLATION_ENABLED",
+                "GEMINI_TRANSLATION_MODEL",
+                "GEMINI_BASE_URL",
+                "TRANSLATION_QE_ENABLED",
+                "TRANSLATION_QE_THRESHOLD",
             )
         }
         os.environ["OPENAI_EXTRACTION_ENABLED"] = "false"
@@ -813,6 +825,536 @@ class ComplaintParsingTests(unittest.TestCase):
         self.assertIsNotNone(fragment, "Should extract route location")
         self.assertIn("Moram", fragment)
         self.assertIn("Parsigutta", fragment)
+
+
+    def test_clean_ocr_noise_removes_greek_characters(self) -> None:
+        text = "Bou thόπο Sardar Jagendar singh"
+        cleaned = _clean_ocr_noise(text, "te")
+        self.assertNotIn("ό", cleaned)
+        self.assertNotIn("π", cleaned)
+        self.assertIn("Sardar", cleaned)
+        self.assertIn("Jagendar", cleaned)
+
+    def test_clean_ocr_noise_preserves_long_english_words(self) -> None:
+        text = "తెలుగు Police Station తెలుగు"
+        cleaned = _clean_ocr_noise(text, "te")
+        self.assertIn("Police", cleaned)
+        self.assertIn("Station", cleaned)
+
+    def test_clean_ocr_noise_nfkc_normalization(self) -> None:
+        # ﬁ (U+FB01 fi ligature) should normalize to "fi"
+        text = "the ofﬁce building"
+        cleaned = _clean_ocr_noise(text, "en")
+        self.assertIn("office", cleaned)
+
+    def test_clean_ocr_noise_collapses_excessive_punctuation(self) -> None:
+        text = "something happened....... and then"
+        cleaned = _clean_ocr_noise(text, "en")
+        self.assertNotIn(".......", cleaned)
+        self.assertIn("...", cleaned)
+
+    def test_provider_sequence_includes_gemini(self) -> None:
+        os.environ["TRANSLATION_PROVIDER"] = "gemini"
+        os.environ["TRANSLATION_FALLBACK_PROVIDER"] = "openai"
+        config = get_translation_config()
+        sequence = _resolve_translation_provider_sequence(config)
+        self.assertEqual(sequence, ["gemini", "openai"])
+
+    def test_provider_sequence_gemini_as_fallback(self) -> None:
+        os.environ["TRANSLATION_PROVIDER"] = "google"
+        os.environ["TRANSLATION_FALLBACK_PROVIDER"] = "gemini"
+        os.environ["TRANSLATION_PROJECT_ID"] = "test-project"
+        config = get_translation_config()
+        sequence = _resolve_translation_provider_sequence(config)
+        self.assertEqual(sequence, ["google", "gemini"])
+
+    @patch("complaint_parsing._translate_to_english_via_gemini")
+    @patch("complaint_parsing._translate_to_english_via_google")
+    def test_falls_back_to_gemini_when_google_fails(
+        self,
+        google_translate_mock,
+        gemini_translate_mock,
+    ) -> None:
+        os.environ["TRANSLATION_ENABLED"] = "true"
+        os.environ["TRANSLATION_PROVIDER"] = "google"
+        os.environ["TRANSLATION_FALLBACK_PROVIDER"] = "gemini"
+        os.environ["TRANSLATION_PROJECT_ID"] = "test-project"
+        os.environ["GEMINI_API_KEY"] = "test-key"
+        os.environ["TRANSLATION_QE_ENABLED"] = "false"
+
+        google_translate_mock.return_value = {
+            "english_text": "",
+            "source_language": "te",
+            "target_language": "en",
+            "status": "failed",
+            "provider": "google_cloud_translate",
+            "model": None,
+            "error": "Cloud Translation API disabled.",
+        }
+        gemini_translate_mock.return_value = {
+            "english_text": (
+                "I respectfully submit this petition regarding the attack on my brother."
+            ),
+            "source_language": "te",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "gemini",
+            "model": "gemini-2.5-flash",
+            "error": None,
+        }
+
+        result = parse_document(MIXED_TELUGU_OCR_SAMPLE)
+
+        self.assertEqual(result["language"]["detected"], "te")
+        self.assertEqual(result["language"]["translation_status"], "translated")
+        self.assertEqual(result["language"]["translation_provider"], "gemini")
+        self.assertEqual(google_translate_mock.call_count, 1)
+        self.assertEqual(gemini_translate_mock.call_count, 1)
+
+    @patch("complaint_parsing._estimate_translation_quality")
+    @patch("complaint_parsing._translate_to_english_via_openai")
+    @patch("complaint_parsing._translate_to_english_via_google")
+    def test_quality_gated_retry_rejects_low_quality_and_accepts_next(
+        self,
+        google_translate_mock,
+        openai_translate_mock,
+        qe_mock,
+    ) -> None:
+        os.environ["TRANSLATION_ENABLED"] = "true"
+        os.environ["TRANSLATION_PROVIDER"] = "auto"
+        os.environ["TRANSLATION_FALLBACK_PROVIDER"] = "openai"
+        os.environ["TRANSLATION_PROJECT_ID"] = "test-project"
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["TRANSLATION_QE_ENABLED"] = "true"
+        os.environ["TRANSLATION_QE_THRESHOLD"] = "0.7"
+
+        google_translate_mock.return_value = {
+            "english_text": "Bad garbled translation with many errors",
+            "source_language": "hi",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "google_cloud_translate",
+            "model": None,
+            "error": None,
+        }
+        openai_translate_mock.return_value = {
+            "english_text": (
+                "My name is Ram Kumar. My mobile phone was stolen on 15 March 2026."
+            ),
+            "source_language": "hi",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "openai_responses",
+            "model": "gpt-5.2",
+            "error": None,
+        }
+        qe_mock.side_effect = [
+            {
+                "score": 0.3,
+                "acceptable": False,
+                "method": "gemini_llm_judge",
+                "details": "Poor translation quality",
+                "error": None,
+            },
+            {
+                "score": 0.85,
+                "acceptable": True,
+                "method": "gemini_llm_judge",
+                "details": "Good translation quality",
+                "error": None,
+            },
+        ]
+
+        result = parse_document(
+            "मेरा नाम राम कुमार है। मेरा मोबाइल 15 मार्च 2026 को चोरी हो गया।"
+        )
+
+        self.assertEqual(result["language"]["translation_status"], "translated")
+        self.assertEqual(result["language"]["translation_provider"], "openai_responses")
+        self.assertEqual(result["language"]["translation_quality_score"], 0.85)
+        self.assertTrue(result["language"]["translation_quality_acceptable"])
+        self.assertFalse(result["language"]["translation_flagged_for_review"])
+        self.assertEqual(google_translate_mock.call_count, 1)
+        self.assertEqual(openai_translate_mock.call_count, 1)
+        self.assertEqual(qe_mock.call_count, 2)
+
+    @patch("complaint_parsing._estimate_translation_quality")
+    @patch("complaint_parsing._translate_to_english_via_openai")
+    @patch("complaint_parsing._translate_to_english_via_google")
+    def test_quality_gated_returns_best_flagged_when_all_below_threshold(
+        self,
+        google_translate_mock,
+        openai_translate_mock,
+        qe_mock,
+    ) -> None:
+        os.environ["TRANSLATION_ENABLED"] = "true"
+        os.environ["TRANSLATION_PROVIDER"] = "auto"
+        os.environ["TRANSLATION_FALLBACK_PROVIDER"] = "openai"
+        os.environ["TRANSLATION_PROJECT_ID"] = "test-project"
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["TRANSLATION_QE_ENABLED"] = "true"
+        os.environ["TRANSLATION_QE_THRESHOLD"] = "0.7"
+
+        google_translate_mock.return_value = {
+            "english_text": "Low quality google translation",
+            "source_language": "hi",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "google_cloud_translate",
+            "model": None,
+            "error": None,
+        }
+        openai_translate_mock.return_value = {
+            "english_text": "Slightly better openai translation",
+            "source_language": "hi",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "openai_responses",
+            "model": "gpt-5.2",
+            "error": None,
+        }
+        qe_mock.side_effect = [
+            {
+                "score": 0.3,
+                "acceptable": False,
+                "method": "gemini_llm_judge",
+                "details": "Poor",
+                "error": None,
+            },
+            {
+                "score": 0.5,
+                "acceptable": False,
+                "method": "gemini_llm_judge",
+                "details": "Mediocre",
+                "error": None,
+            },
+        ]
+
+        result = parse_document(
+            "मेरा नाम राम कुमार है। मेरा मोबाइल चोरी हो गया।"
+        )
+
+        self.assertEqual(result["language"]["translation_status"], "translated")
+        # Best result should be from OpenAI (score 0.5 > 0.3)
+        self.assertEqual(result["language"]["translation_provider"], "openai_responses")
+        self.assertTrue(result["language"]["translation_flagged_for_review"])
+        self.assertIn("translation_quality_low", result["gaps"]["pipeline_flags"])
+
+
+    @patch("complaint_parsing._estimate_translation_quality")
+    @patch("complaint_parsing._translate_to_english_via_openai")
+    @patch("complaint_parsing._translate_to_english_via_google")
+    def test_ensemble_picks_highest_quality_translation(
+        self,
+        google_translate_mock,
+        openai_translate_mock,
+        qe_mock,
+    ) -> None:
+        """With QE + 2 providers, ensemble runs both in parallel and picks highest score."""
+        os.environ["TRANSLATION_ENABLED"] = "true"
+        os.environ["TRANSLATION_PROVIDER"] = "auto"
+        os.environ["TRANSLATION_FALLBACK_PROVIDER"] = "openai"
+        os.environ["TRANSLATION_PROJECT_ID"] = "test-project"
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["TRANSLATION_QE_ENABLED"] = "true"
+        os.environ["TRANSLATION_QE_THRESHOLD"] = "0.7"
+
+        google_translate_mock.return_value = {
+            "english_text": "Google translation text",
+            "source_language": "hi",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "google_cloud_translate",
+            "model": None,
+            "error": None,
+        }
+        openai_translate_mock.return_value = {
+            "english_text": "OpenAI translation text",
+            "source_language": "hi",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "openai_responses",
+            "model": "gpt-5.2",
+            "error": None,
+        }
+
+        def qe_side_effect(source, translated, lang, config):
+            if "OpenAI" in translated:
+                return {"score": 0.92, "acceptable": True, "method": "gemini_llm_judge", "details": "Excellent"}
+            return {"score": 0.55, "acceptable": False, "method": "gemini_llm_judge", "details": "Mediocre"}
+
+        qe_mock.side_effect = qe_side_effect
+
+        result = parse_document(
+            "मेरा नाम राम कुमार है। मेरा मोबाइल 15 मार्च 2026 को चोरी हो गया।"
+        )
+
+        self.assertEqual(result["language"]["translation_provider"], "openai_responses")
+        self.assertEqual(result["language"]["translation_quality_score"], 0.92)
+        self.assertTrue(result["language"]["translation_quality_acceptable"])
+        self.assertFalse(result["language"]["translation_flagged_for_review"])
+        # Both providers should have been called (ensemble)
+        self.assertEqual(google_translate_mock.call_count, 1)
+        self.assertEqual(openai_translate_mock.call_count, 1)
+
+    @patch("complaint_parsing._estimate_translation_quality")
+    @patch("complaint_parsing._translate_to_english_via_openai")
+    @patch("complaint_parsing._translate_to_english_via_google")
+    def test_ensemble_flags_best_when_all_below_threshold(
+        self,
+        google_translate_mock,
+        openai_translate_mock,
+        qe_mock,
+    ) -> None:
+        """When all ensemble scores are below threshold, flag best for review."""
+        os.environ["TRANSLATION_ENABLED"] = "true"
+        os.environ["TRANSLATION_PROVIDER"] = "auto"
+        os.environ["TRANSLATION_FALLBACK_PROVIDER"] = "openai"
+        os.environ["TRANSLATION_PROJECT_ID"] = "test-project"
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["TRANSLATION_QE_ENABLED"] = "true"
+        os.environ["TRANSLATION_QE_THRESHOLD"] = "0.7"
+
+        google_translate_mock.return_value = {
+            "english_text": "Google low quality",
+            "source_language": "hi",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "google_cloud_translate",
+            "model": None,
+            "error": None,
+        }
+        openai_translate_mock.return_value = {
+            "english_text": "OpenAI low quality",
+            "source_language": "hi",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "openai_responses",
+            "model": "gpt-5.2",
+            "error": None,
+        }
+
+        def qe_side_effect(source, translated, lang, config):
+            if "OpenAI" in translated:
+                return {"score": 0.5, "acceptable": False, "method": "gemini_llm_judge", "details": "Below threshold"}
+            return {"score": 0.3, "acceptable": False, "method": "gemini_llm_judge", "details": "Poor"}
+
+        qe_mock.side_effect = qe_side_effect
+
+        result = parse_document(
+            "मेरा नाम राम कुमार है। मेरा मोबाइल चोरी हो गया।"
+        )
+
+        self.assertEqual(result["language"]["translation_provider"], "openai_responses")
+        self.assertTrue(result["language"]["translation_flagged_for_review"])
+
+    @patch("complaint_parsing._translate_to_english_via_openai")
+    @patch("complaint_parsing._translate_to_english_via_google")
+    def test_qe_disabled_uses_sequential_behavior(
+        self,
+        google_translate_mock,
+        openai_translate_mock,
+    ) -> None:
+        """When QE is disabled, sequential path is used — second provider never called."""
+        os.environ["TRANSLATION_ENABLED"] = "true"
+        os.environ["TRANSLATION_PROVIDER"] = "auto"
+        os.environ["TRANSLATION_FALLBACK_PROVIDER"] = "openai"
+        os.environ["TRANSLATION_PROJECT_ID"] = "test-project"
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["TRANSLATION_QE_ENABLED"] = "false"
+
+        google_translate_mock.return_value = {
+            "english_text": "Google translation",
+            "source_language": "hi",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "google_cloud_translate",
+            "model": None,
+            "error": None,
+        }
+
+        result = parse_document(
+            "मेरा नाम राम कुमार है। मेरा मोबाइल चोरी हो गया।"
+        )
+
+        self.assertEqual(result["language"]["translation_provider"], "google_cloud_translate")
+        self.assertEqual(google_translate_mock.call_count, 1)
+        self.assertEqual(openai_translate_mock.call_count, 0)
+
+    def test_parse_document_includes_timing_metadata(self) -> None:
+        """Parsed result contains timing dict with expected keys."""
+        result = parse_document(CALIBRATION_COMPLAINT_1)
+        timing = result["meta"]["timing"]
+        self.assertIn("language_detection_ms", timing)
+        self.assertIn("translation_ms", timing)
+        self.assertIn("heuristic_extraction_ms", timing)
+        self.assertIn("llm_extraction_ms", timing)
+        self.assertIn("fir_draft_ms", timing)
+        for key, value in timing.items():
+            self.assertGreaterEqual(value, 0, f"timing[{key}] should be non-negative")
+
+    def test_parse_document_calls_progress_callback(self) -> None:
+        """Progress callback receives expected step IDs in order."""
+        received_steps = []
+
+        def callback(step_id, label, details):
+            received_steps.append(step_id)
+
+        parse_document(CALIBRATION_COMPLAINT_1, progress_callback=callback)
+        expected_steps = [
+            "detecting_language",
+            "translating",
+            "extracting_fields",
+            "llm_extraction",
+            "generating_fir",
+            "complete",
+        ]
+        # All expected steps should appear and in order
+        for step in expected_steps:
+            self.assertIn(step, received_steps)
+        # Verify ordering
+        indices = [received_steps.index(s) for s in expected_steps]
+        self.assertEqual(indices, sorted(indices))
+
+
+class TestDualLanguageExtraction(unittest.TestCase):
+    """Tests for dual-language LLM extraction and original-language evidence validation."""
+
+    HINDI_ORIGINAL = (
+        "श्रीमान, मैं राजेश कुमार निवासी मोहल्ला नया बाजार से प्रार्थना करता हूँ कि "
+        "दिनांक 15-03-2026 को रात 10:30 बजे मेरे घर में चोरी हो गई।"
+    )
+    ENGLISH_TRANSLATION = (
+        "Sir, I Rajesh Kumar resident of Mohalla Naya Bazaar submit that "
+        "on 15-03-2026 at 10:30 PM theft occurred in my house."
+    )
+
+    @patch("complaint_parsing.get_question_guided_extraction_config")
+    @patch("complaint_parsing.urllib.request.urlopen")
+    def test_dual_language_prompt_includes_both_texts(
+        self, urlopen_mock, config_mock
+    ) -> None:
+        """When original_text differs from english_text, the prompt contains both."""
+        config_mock.return_value = {
+            "enabled": True,
+            "api_key": "test-key",
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+            "reasoning_effort": "none",
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "{}"}]}]
+        }).encode()
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        urlopen_mock.return_value = mock_response
+
+        _extract_complaint_insights_via_openai(
+            self.ENGLISH_TRANSLATION,
+            {"who": {}, "what": {}, "when": {}, "where": {}, "why": {}, "how": {}},
+            original_text=self.HINDI_ORIGINAL,
+        )
+
+        sent_data = json.loads(urlopen_mock.call_args[0][0].data.decode())
+        user_msg = sent_data["input"][-1]["content"][0]["text"]
+        self.assertIn("Original text:", user_msg)
+        self.assertIn("English translation:", user_msg)
+        self.assertIn("राजेश कुमार", user_msg)
+        self.assertIn("Rajesh Kumar", user_msg)
+        self.assertNotIn("Complaint text:", user_msg)
+
+    @patch("complaint_parsing.get_question_guided_extraction_config")
+    @patch("complaint_parsing.urllib.request.urlopen")
+    def test_single_language_prompt_unchanged_for_english(
+        self, urlopen_mock, config_mock
+    ) -> None:
+        """When original_text is None, the prompt uses 'Complaint text:' format."""
+        config_mock.return_value = {
+            "enabled": True,
+            "api_key": "test-key",
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4o-mini",
+            "reasoning_effort": "none",
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps({
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "{}"}]}]
+        }).encode()
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        urlopen_mock.return_value = mock_response
+
+        _extract_complaint_insights_via_openai(
+            self.ENGLISH_TRANSLATION,
+            {"who": {}, "what": {}, "when": {}, "where": {}, "why": {}, "how": {}},
+        )
+
+        sent_data = json.loads(urlopen_mock.call_args[0][0].data.decode())
+        user_msg = sent_data["input"][-1]["content"][0]["text"]
+        self.assertIn("Complaint text:", user_msg)
+        self.assertNotIn("Original text:", user_msg)
+        self.assertNotIn("English translation:", user_msg)
+
+    @patch("complaint_parsing._extract_complaint_insights_via_openai")
+    @patch("complaint_parsing._translate_to_english_via_openai")
+    @patch("complaint_parsing._translate_to_english_via_google")
+    def test_evidence_from_original_language_passes_validation(
+        self, google_mock, openai_translate_mock, extraction_mock
+    ) -> None:
+        """Evidence snippet in Hindi passes validation when combined_source_text includes original."""
+        hindi_text = self.HINDI_ORIGINAL
+        english_text = self.ENGLISH_TRANSLATION
+        hindi_evidence = "मोहल्ला नया बाजार"
+
+        os.environ["TRANSLATION_ENABLED"] = "true"
+        os.environ["TRANSLATION_PROVIDER"] = "auto"
+        os.environ["TRANSLATION_PROJECT_ID"] = "test"
+
+        google_mock.return_value = {
+            "english_text": english_text,
+            "source_language": "hi",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "google_cloud_translate",
+            "model": None,
+            "error": None,
+        }
+        openai_translate_mock.return_value = {
+            "english_text": "",
+            "status": "unavailable",
+            "provider": "openai_responses",
+            "model": None,
+            "error": "Not called",
+            "source_language": "hi",
+            "target_language": "en",
+        }
+
+        extraction_mock.return_value = {
+            "complaint_summary": "Theft complaint by Rajesh Kumar",
+            "review_questions": [],
+            "answers": {
+                "where": {
+                    "answer": "Mohalla Naya Bazaar",
+                    "confidence": "high",
+                    "evidence": [hindi_evidence],
+                },
+            },
+        }
+
+        result = parse_document(hindi_text)
+
+        where_validation = (
+            result.get("meta", {})
+            .get("extraction", {})
+            .get("question_guided_validation", {})
+            .get("rejected_reasons", {})
+            .get("where")
+        )
+        self.assertIsNone(
+            where_validation,
+            "Hindi evidence should not be rejected — combined_source_text includes original",
+        )
 
 
 if __name__ == "__main__":

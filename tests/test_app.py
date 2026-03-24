@@ -530,5 +530,75 @@ class ParseDocumentEdgeCaseTests(unittest.TestCase):
         self.assertIn("extraction", result["meta"])
 
 
+class StreamEndpointTests(_BaseAppTestCase):
+    """Tests for the SSE streaming parse endpoint."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from app import _rate_limit_log, app
+
+        self._init_db_patch = patch("app.initialize_database", new=AsyncMock(return_value=None))
+        self._db_health_patch = patch(
+            "app.get_database_health",
+            new=AsyncMock(return_value={"status": "ok", "table_ready": True, "detail": "ready"}),
+        )
+        self._init_db_patch.start()
+        self._db_health_patch.start()
+        _rate_limit_log.clear()
+        self.client = TestClient(app, raise_server_exceptions=False)
+
+    def tearDown(self) -> None:
+        self._db_health_patch.stop()
+        self._init_db_patch.stop()
+        super().tearDown()
+
+    def _login(self) -> None:
+        response = self.client.post(
+            "/api/auth/login",
+            json={"username": "operator", "password": "correct horse battery staple"},
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_stream_requires_auth(self) -> None:
+        response = self.client.post(
+            "/api/parse/stream",
+            files={"file": ("complaint.pdf", _minimal_pdf_bytes(), "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 401)
+
+    @patch("app.save_parse_record", new_callable=AsyncMock)
+    @patch("app.process_document_bytes")
+    def test_stream_endpoint_returns_sse_events(
+        self,
+        mock_process: MagicMock,
+        mock_save: AsyncMock,
+    ) -> None:
+        self._login()
+        mock_doc = MagicMock()
+        mock_doc.document.text = "Subject: Test complaint about theft on 10 March 2026"
+        mock_process.return_value = mock_doc
+        mock_save.return_value = str(uuid.uuid4())
+
+        response = self.client.post(
+            "/api/parse/stream",
+            files={"file": ("complaint.pdf", _minimal_pdf_bytes(), "application/pdf")},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/event-stream", response.headers.get("content-type", ""))
+
+        import json
+        events = []
+        for line in response.text.strip().split("\n"):
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+
+        # Must have at least one progress event and a done event
+        self.assertTrue(len(events) >= 2, f"Expected >=2 events, got {len(events)}")
+        done_events = [e for e in events if e.get("step") == "done"]
+        self.assertEqual(len(done_events), 1)
+        self.assertIn("result", done_events[0])
+        self.assertIn("parsed_output", done_events[0]["result"])
+
+
 if __name__ == "__main__":
     unittest.main()

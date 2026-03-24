@@ -8,8 +8,11 @@ import logging
 import os
 import re
 import ssl
+import time
+import unicodedata
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -481,8 +484,15 @@ Confidence must be one of: high, medium, low.
 Every evidence item must be a direct snippet copied from the complaint text, not a paraphrase.
 If a field is unknown or weakly supported, use empty strings or empty arrays and add a useful follow-up question to review_questions.
 
-IMPORTANT — Language quality:
-All answer values and complaint_summary MUST be in clear, grammatically correct English. The complaint text may be a machine translation from Hindi, Telugu, or another Indian language and will often contain broken grammar, garbled fragments, or literal word-for-word translations. You MUST rewrite every answer into proper English while preserving the factual meaning. Do not copy translation artefacts. Write as a professional police report would read."""
+IMPORTANT — Language quality and dual-language input:
+All answer values and complaint_summary MUST be in clear, grammatically correct English.
+When you receive both an "Original text" (in Hindi/Telugu or another Indian language) and an
+"English translation", use BOTH to extract fields. The translation may lose or distort names,
+times, and place names — cross-reference the original to recover such details.
+Evidence snippets may be copied verbatim from EITHER the original text OR the English translation.
+All answer values must still be written as clear, professional English.
+When only a single "Complaint text" is provided (no original), treat it as before.
+The complaint text may be a machine translation from Hindi, Telugu, or another Indian language and will often contain broken grammar, garbled fragments, or literal word-for-word translations. You MUST rewrite every answer into proper English while preserving the factual meaning. Do not copy translation artefacts. Write as a professional police report would read."""
 _EXTRACTION_FEW_SHOT_EXAMPLES = [
     {
         "role": "user",
@@ -636,13 +646,13 @@ def process_document_bytes(
 
 def get_translation_config() -> dict[str, Any]:
     provider = (_clean_env_value(os.getenv("TRANSLATION_PROVIDER")) or "auto").lower()
-    if provider not in {"auto", "google", "openai", "none"}:
+    if provider not in {"auto", "google", "openai", "gemini", "none"}:
         provider = "auto"
 
     fallback_provider = (
         _clean_env_value(os.getenv("TRANSLATION_FALLBACK_PROVIDER")) or "openai"
     ).lower()
-    if fallback_provider not in {"google", "openai", "none"}:
+    if fallback_provider not in {"google", "openai", "gemini", "none"}:
         fallback_provider = "openai"
 
     openai_api_key = _clean_env_value(os.getenv("OPENAI_TRANSLATION_API_KEY")) or _clean_env_value(
@@ -670,6 +680,18 @@ def get_translation_config() -> dict[str, Any]:
         "openai_reasoning_effort": (
             _clean_env_value(os.getenv("OPENAI_TRANSLATION_REASONING_EFFORT")) or "none"
         ).lower(),
+        "gemini_enabled": _is_env_true("GEMINI_TRANSLATION_ENABLED", True),
+        "gemini_api_key": _clean_env_value(os.getenv("GEMINI_API_KEY")),
+        "gemini_api_key_configured": bool(_clean_env_value(os.getenv("GEMINI_API_KEY"))),
+        "gemini_model": _clean_env_value(os.getenv("GEMINI_TRANSLATION_MODEL")) or "gemini-2.5-flash",
+        "gemini_base_url": (
+            _clean_env_value(os.getenv("GEMINI_BASE_URL"))
+            or "https://generativelanguage.googleapis.com/v1beta"
+        ).rstrip("/"),
+        "quality_estimation_enabled": _is_env_true("TRANSLATION_QE_ENABLED", False),
+        "quality_estimation_threshold": _safe_float(
+            _clean_env_value(os.getenv("TRANSLATION_QE_THRESHOLD")), 0.7
+        ),
     }
 
 
@@ -724,6 +746,15 @@ def _is_env_true(key: str, default: bool) -> bool:
     return raw.lower() in _TRUE_VALUES
 
 
+def _safe_float(value: Optional[str], default: float) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
 def _normalize_language_code(code: Optional[str]) -> str:
     normalized = (code or "").strip().lower()
     if "-" in normalized:
@@ -738,6 +769,41 @@ def _normalize_whitespace(text: str) -> str:
     value = re.sub(r"\n[ \t]+", "\n", value)
     value = re.sub(r"\n{3,}", "\n\n", value)
     return value.strip()
+
+
+_OCR_GREEK_NOISE = re.compile(r"[\u0370-\u03FF\u1F00-\u1FFF]+")
+_OCR_ISOLATED_LATIN = re.compile(
+    r"(?<=[\u0C00-\u0C7F\u0900-\u097F])\s+[A-Za-z]{1,2}\s+(?=[\u0C00-\u0C7F\u0900-\u097F])"
+)
+_OCR_EXCESSIVE_PUNCTUATION = re.compile(r"([.!?,;:\-])\1{4,}")
+
+
+def _clean_ocr_noise(text: str, detected_language: str) -> str:
+    """Remove common OCR artifacts from handwritten document text."""
+    if not text:
+        return text
+
+    # NFKC Unicode normalization — collapses compatibility characters
+    cleaned = unicodedata.normalize("NFKC", text)
+
+    # Remove control characters except newline and tab
+    cleaned = "".join(
+        ch for ch in cleaned
+        if ch in ("\n", "\t") or not unicodedata.category(ch).startswith("C")
+    )
+
+    # Remove Greek letters — common OCR misrecognitions of Telugu glyphs
+    cleaned = _OCR_GREEK_NOISE.sub("", cleaned)
+
+    # For Telugu/Hindi: remove isolated 1-2 char Latin fragments between Indic chars
+    # Preserve English words >= 3 chars (names, dates, "Police Station")
+    if detected_language in ("te", "hi"):
+        cleaned = _OCR_ISOLATED_LATIN.sub(" ", cleaned)
+
+    # Collapse excessive repeated punctuation (5+ → 3)
+    cleaned = _OCR_EXCESSIVE_PUNCTUATION.sub(r"\1\1\1", cleaned)
+
+    return cleaned.strip()
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -1798,6 +1864,158 @@ def _translate_to_english_via_openai(
     return result
 
 
+def _extract_gemini_output_text(payload: dict[str, Any]) -> str:
+    try:
+        return payload["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError, TypeError):
+        return ""
+
+
+def _extract_gemini_error_message(error_body: str) -> str:
+    cleaned_body = _normalize_whitespace(error_body)
+    if not cleaned_body:
+        return "Gemini translation request failed."
+    try:
+        payload = json.loads(cleaned_body)
+    except json.JSONDecodeError:
+        return cleaned_body
+    error = payload.get("error")
+    if isinstance(error, dict):
+        message = _clean_extracted_value(error.get("message"))
+        if message:
+            return message
+    return cleaned_body
+
+
+def _translate_to_english_via_gemini(
+    normalized_text: str,
+    detected_language: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    result = _build_translation_result(
+        normalized_text,
+        detected_language,
+        config["target_language"],
+    )
+    result["provider"] = "gemini"
+    result["model"] = config["gemini_model"]
+
+    if not config["gemini_enabled"]:
+        result.update(
+            {
+                "status": "unavailable",
+                "error": "Set GEMINI_TRANSLATION_ENABLED=true to enable Gemini translation.",
+            }
+        )
+        return result
+
+    if not config["gemini_api_key"]:
+        result.update(
+            {
+                "status": "unavailable",
+                "error": "Set GEMINI_API_KEY to enable Gemini translation.",
+            }
+        )
+        return result
+
+    chunks = _chunk_text_for_translation(normalized_text, max_chars=12000)
+    translated_chunks = []
+    source_language_name = _LANGUAGE_NAMES.get(detected_language, "Unknown")
+
+    for chunk in chunks:
+        payload: dict[str, Any] = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": f"Source language: {source_language_name}\n\n{chunk}",
+                        }
+                    ],
+                }
+            ],
+            "systemInstruction": {
+                "parts": [
+                    {
+                        "text": (
+                            "Translate the following police complaint into clear, literal English. "
+                            "Preserve names, dates, times, addresses, lists, line breaks, and uncertainty. "
+                            "Do not summarize, explain, or omit details. Return only the translated English text. "
+                            "The text was OCR'd from handwritten documents and may contain character recognition errors. "
+                            "Use context to infer intended meaning."
+                        ),
+                    }
+                ],
+            },
+            "generationConfig": {
+                "temperature": 0.2,
+            },
+        }
+
+        url = (
+            f"{config['gemini_base_url']}/models/{config['gemini_model']}"
+            f":generateContent?key={config['gemini_api_key']}"
+        )
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            ssl_context = _build_openai_ssl_context()
+            with urllib.request.urlopen(request, timeout=180, context=ssl_context) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            result.update(
+                {
+                    "status": "failed",
+                    "error": _extract_gemini_error_message(error_body),
+                }
+            )
+            return result
+        except Exception as exc:  # pragma: no cover - depends on live network config
+            logger.warning("Gemini translation request failed: %s", exc)
+            result.update(
+                {
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
+            return result
+
+        translated_chunk = _normalize_whitespace(_extract_gemini_output_text(response_payload))
+        if not translated_chunk:
+            result.update(
+                {
+                    "status": "failed",
+                    "error": "Gemini translation completed but returned no translated text.",
+                }
+            )
+            return result
+        translated_chunks.append(translated_chunk)
+
+    translated_text = "\n\n".join(translated_chunks).strip()
+    if translated_text and (detected_language == "unknown" or re.search(r"[A-Za-z]", translated_text)):
+        result.update(
+            {
+                "english_text": translated_text,
+                "status": "translated",
+            }
+        )
+        return result
+
+    result.update(
+        {
+            "status": "failed",
+            "error": "Gemini translation completed but the output did not appear to be English text.",
+        }
+    )
+    return result
+
+
 def _resolve_translation_provider_sequence(config: dict[str, Any]) -> list[str]:
     provider = config["provider"]
     fallback_provider = config["fallback_provider"]
@@ -1808,6 +2026,8 @@ def _resolve_translation_provider_sequence(config: dict[str, Any]) -> list[str]:
         sequence = ["google"]
     elif provider == "openai":
         sequence = ["openai"]
+    elif provider == "gemini":
+        sequence = ["gemini"]
     else:
         sequence = ["google"] if config["project_id"] else ["openai"]
 
@@ -1816,7 +2036,131 @@ def _resolve_translation_provider_sequence(config: dict[str, Any]) -> list[str]:
     return sequence
 
 
-def _translate_to_english(text: str, detected_language: str) -> dict[str, Any]:
+def _estimate_translation_quality(
+    source_text: str,
+    translated_text: str,
+    source_language: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Use Gemini Flash as an LLM-as-Judge to score translation quality 0.0-1.0."""
+    result: dict[str, Any] = {
+        "score": 1.0,
+        "acceptable": True,
+        "method": "gemini_llm_judge",
+        "details": "",
+        "error": None,
+    }
+
+    if not config.get("gemini_api_key"):
+        result.update({"error": "No Gemini API key for quality estimation.", "method": "unavailable"})
+        return result
+
+    # Truncate inputs for fast, cheap scoring
+    src = source_text[:3000]
+    tgt = translated_text[:3000]
+    source_language_name = _LANGUAGE_NAMES.get(source_language, "Unknown")
+
+    payload: dict[str, Any] = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": (
+                            f"Rate this {source_language_name}-to-English translation on a scale of "
+                            "0.0 to 1.0 where 1.0 is perfect.\n\n"
+                            "Consider: accuracy, completeness, fluency, and preservation of names/dates/numbers.\n\n"
+                            f"SOURCE ({source_language_name}):\n{src}\n\n"
+                            f"TRANSLATION (English):\n{tgt}\n\n"
+                            "Respond with ONLY a JSON object: {\"score\": <float>, \"details\": \"<brief reason>\"}"
+                        ),
+                    }
+                ],
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.0,
+        },
+    }
+
+    model = config.get("gemini_model") or "gemini-2.5-flash"
+    url = (
+        f"{config['gemini_base_url']}/models/{model}"
+        f":generateContent?key={config['gemini_api_key']}"
+    )
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        ssl_context = _build_openai_ssl_context()
+        with urllib.request.urlopen(request, timeout=60, context=ssl_context) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        logger.warning("Translation quality estimation failed: %s", exc)
+        result["error"] = str(exc)
+        return result  # fail-open: score=1.0, acceptable=True
+
+    raw_text = _extract_gemini_output_text(response_payload)
+    parsed = _extract_json_object_from_text(raw_text)
+    if parsed and isinstance(parsed.get("score"), (int, float)):
+        score = max(0.0, min(1.0, float(parsed["score"])))
+        threshold = config.get("quality_estimation_threshold", 0.7)
+        result.update(
+            {
+                "score": score,
+                "acceptable": score >= threshold,
+                "details": str(parsed.get("details", "")),
+            }
+        )
+    else:
+        result["error"] = "Could not parse quality score from Gemini response."
+        # fail-open: keep score=1.0, acceptable=True
+
+    return result
+
+
+def _dispatch_translation(
+    provider: str,
+    normalized_text: str,
+    detected_language: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    if provider == "google":
+        return _translate_to_english_via_google(normalized_text, detected_language, config)
+    if provider == "gemini":
+        return _translate_to_english_via_gemini(normalized_text, detected_language, config)
+    return _translate_to_english_via_openai(normalized_text, detected_language, config)
+
+
+def _translate_and_score_one(
+    provider: str,
+    normalized_text: str,
+    detected_language: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    """Translate via *provider* and score with QE.  Thread-pool worker."""
+    result = _dispatch_translation(provider, normalized_text, detected_language, config)
+    if result["status"] != "translated":
+        return result
+    qe = _estimate_translation_quality(
+        normalized_text, result["english_text"], detected_language, config,
+    )
+    result["quality_score"] = qe["score"]
+    result["quality_acceptable"] = qe["acceptable"]
+    result["quality_method"] = qe["method"]
+    result["quality_details"] = qe.get("details", "")
+    return result
+
+
+def _translate_to_english(
+    text: str,
+    detected_language: str,
+    progress_callback: Optional[Callable[[str, str, Optional[str]], None]] = None,
+) -> dict[str, Any]:
     normalized_text = _normalize_whitespace(text)
     config = get_translation_config()
     result = _build_translation_result(
@@ -1834,6 +2178,9 @@ def _translate_to_english(text: str, detected_language: str) -> dict[str, Any]:
         result.update({"status": "disabled", "provider": "none"})
         return result
 
+    # Clean OCR noise before sending to providers
+    normalized_text = _clean_ocr_noise(normalized_text, detected_language)
+
     provider_sequence = _resolve_translation_provider_sequence(config)
     if not provider_sequence:
         result.update(
@@ -1845,38 +2192,91 @@ def _translate_to_english(text: str, detected_language: str) -> dict[str, Any]:
         )
         return result
 
-    attempt_errors: list[str] = []
-    last_result = result
+    qe_enabled = config.get("quality_estimation_enabled", False)
+
+    # ── Ensemble path: QE enabled with 2+ providers → run all in parallel ──
+    if qe_enabled and len(provider_sequence) > 1:
+        attempt_errors: list[str] = []
+        best_result: Optional[dict[str, Any]] = None
+        best_score = -1.0
+        ensemble_scores: dict[str, float] = {}
+
+        with ThreadPoolExecutor(max_workers=len(provider_sequence)) as pool:
+            futures = {
+                pool.submit(
+                    _translate_and_score_one,
+                    prov, normalized_text, detected_language, config,
+                ): prov
+                for prov in provider_sequence
+            }
+            for future in as_completed(futures):
+                prov = futures[future]
+                if progress_callback:
+                    progress_callback("translating", "Translating complaint", f"{prov} finished")
+                try:
+                    current_result = future.result()
+                except Exception as exc:  # pragma: no cover
+                    attempt_errors.append(f"{prov}: {exc}")
+                    continue
+
+                if current_result["status"] != "translated":
+                    if current_result.get("error"):
+                        attempt_errors.append(
+                            f"{current_result['provider']}: {current_result['error']}"
+                        )
+                    continue
+
+                score = current_result.get("quality_score", -1.0)
+                ensemble_scores[current_result["provider"]] = score
+
+                if score > best_score:
+                    best_score = score
+                    best_result = current_result
+
+        if best_result is not None:
+            best_result["ensemble_providers_tried"] = len(provider_sequence)
+            best_result["ensemble_scores"] = ensemble_scores
+            if not best_result.get("quality_acceptable", True):
+                best_result["flagged_for_review"] = True
+                if attempt_errors:
+                    best_result["error"] = "; ".join(attempt_errors)
+            return best_result
+
+        # No successful translation at all
+        last_result = result
+        if attempt_errors:
+            last_result = dict(result)
+            last_result["error"] = "; ".join(attempt_errors)
+        return last_result
+
+    # ── Sequential path: QE disabled or single provider ──
     for provider in provider_sequence:
-        if provider == "google":
-            current_result = _translate_to_english_via_google(
-                normalized_text,
-                detected_language,
-                config,
-            )
-        else:
-            current_result = _translate_to_english_via_openai(
-                normalized_text,
-                detected_language,
-                config,
-            )
+        if progress_callback:
+            progress_callback("translating", "Translating complaint", provider)
+        current_result = _dispatch_translation(provider, normalized_text, detected_language, config)
 
-        if current_result["status"] == "translated":
+        if current_result["status"] not in {"translated"}:
+            if current_result["status"] not in {"failed", "unavailable"}:
+                return current_result
+            continue
+
+        # No QE → return first success immediately
+        if not qe_enabled:
             return current_result
 
-        if current_result["status"] not in {"failed", "unavailable"}:
-            return current_result
+        # Single-provider QE
+        qe_result = _estimate_translation_quality(
+            normalized_text, current_result["english_text"], detected_language, config,
+        )
+        current_result["quality_score"] = qe_result["score"]
+        current_result["quality_acceptable"] = qe_result["acceptable"]
+        current_result["quality_method"] = qe_result["method"]
+        current_result["quality_details"] = qe_result.get("details", "")
+        if not qe_result["acceptable"]:
+            current_result["flagged_for_review"] = True
+        return current_result
 
-        if current_result.get("error"):
-            attempt_errors.append(
-                f"{current_result['provider']}: {current_result['error']}"
-            )
-        last_result = current_result
-
-    if attempt_errors:
-        last_result = dict(last_result)
-        last_result["error"] = "; ".join(attempt_errors)
-    return last_result
+    return result
 
 
 def _extract_json_object_from_text(value: str) -> Optional[dict[str, Any]]:
@@ -2426,6 +2826,8 @@ def _build_who_payload_from_question_answer(
 def _extract_complaint_insights_via_openai(
     english_text: str,
     heuristic_fields: dict[str, dict[str, Any]],
+    *,
+    original_text: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     normalized_text = _normalize_whitespace(english_text)
     if not normalized_text:
@@ -2457,14 +2859,22 @@ def _extract_complaint_insights_via_openai(
                 "text": example["content"],
             }],
         })
+    if original_text and _normalize_whitespace(original_text) != normalized_text:
+        normalized_original = _normalize_whitespace(original_text)
+        complaint_block = (
+            "Original text:\n" + normalized_original
+            + "\n\n---\nEnglish translation:\n" + normalized_text
+        )
+    else:
+        complaint_block = "Complaint text:\n" + normalized_text
+
     input_messages.append({
         "role": "user",
         "content": [
             {
                 "type": "input_text",
                 "text": (
-                    "Complaint text:\n"
-                    + normalized_text
+                    complaint_block
                     + "\n\n---\nHeuristic pre-extraction (WARNING — known failure modes: "
                     "WHERE may contain hospital/current location instead of incident site; "
                     "WHAT may be an entire paragraph instead of a concise summary; "
@@ -3117,6 +3527,8 @@ def _build_gap_summary(
         pipeline_flags.append("translation_to_english_unavailable")
     if not complaint_assessment.get("likely_police_complaint", False):
         pipeline_flags.append("low_police_complaint_signal")
+    if language_info.get("translation_flagged_for_review"):
+        pipeline_flags.append("translation_quality_low")
 
     missing_details = []
     uncertain_details = []
@@ -4367,15 +4779,32 @@ def _build_fir_draft(
     }
 
 
-def parse_document(raw: str) -> dict[str, Any]:
+def parse_document(
+    raw: str,
+    progress_callback: Optional[Callable[[str, str, Optional[str]], None]] = None,
+) -> dict[str, Any]:
+    _emit = progress_callback or (lambda *_args: None)
+    timing: dict[str, float] = {}
+
     raw_text = _normalize_whitespace(raw)
     raw_lines = normalize_lines(raw_text)
 
+    # ── Language detection ──
+    _emit("detecting_language", "Detecting language", None)
+    t0 = time.monotonic()
     language_detection = _detect_language(raw_text)
+    timing["language_detection_ms"] = round((time.monotonic() - t0) * 1000, 1)
+
+    # ── Translation ──
+    _emit("translating", "Translating complaint", None)
+    t0 = time.monotonic()
     translation_result = _translate_to_english(
         raw_text,
         language_detection["language_code"],
+        progress_callback=progress_callback,
     )
+    timing["translation_ms"] = round((time.monotonic() - t0) * 1000, 1)
+
     detected_language = _normalize_language_code(
         translation_result.get("source_language") or language_detection["language_code"]
     )
@@ -4398,8 +4827,15 @@ def parse_document(raw: str) -> dict[str, Any]:
         "translation_provider": translation_result["provider"],
         "translation_model": translation_result.get("model"),
         "translation_error": translation_result["error"],
+        "translation_quality_score": translation_result.get("quality_score"),
+        "translation_quality_method": translation_result.get("quality_method"),
+        "translation_quality_acceptable": translation_result.get("quality_acceptable"),
+        "translation_flagged_for_review": translation_result.get("flagged_for_review", False),
     }
 
+    # ── Heuristic extraction ──
+    _emit("extracting_fields", "Extracting complaint fields", None)
+    t0 = time.monotonic()
     heuristic_fields = {
         "who": _extract_who(english_lines, english_sentences, extraction_text),
         "what": _extract_what(english_lines, english_sentences),
@@ -4408,12 +4844,27 @@ def parse_document(raw: str) -> dict[str, Any]:
         "why": _extract_why(english_lines, english_sentences),
         "how": _extract_how(english_lines, english_sentences),
     }
-    raw_llm_payload = _extract_complaint_insights_via_openai(english_text, heuristic_fields)
+    timing["heuristic_extraction_ms"] = round((time.monotonic() - t0) * 1000, 1)
+
+    # ── LLM extraction ──
+    _emit("llm_extraction", "Running AI-guided extraction", None)
+    t0 = time.monotonic()
+    raw_llm_payload = _extract_complaint_insights_via_openai(
+        english_text, heuristic_fields, original_text=raw_text,
+    )
+    is_translated = translation_result["status"] in ("translated", "success")
+    combined_source_text = (
+        extraction_text + "\n\n" + raw_text
+        if is_translated and raw_text != extraction_text
+        else extraction_text
+    )
     llm_payload = _validate_question_guided_answers(
         raw_llm_payload,
-        source_text=extraction_text,
+        source_text=combined_source_text,
         config=extraction_config,
     ) if (extraction_config := get_question_guided_extraction_config()) else None
+    timing["llm_extraction_ms"] = round((time.monotonic() - t0) * 1000, 1)
+
     complaint_fields = _merge_question_guided_fields(heuristic_fields, llm_payload)
     complaint_assessment = _assess_police_complaint_relevance(extraction_text)
     gaps = _build_gap_summary(complaint_fields, language_info, complaint_assessment)
@@ -4439,6 +4890,10 @@ def parse_document(raw: str) -> dict[str, Any]:
     }
     complaint_brief = _build_complaint_brief(complaint_fields, llm_payload)
     review_questions = _build_review_questions(complaint_fields, gaps, llm_payload)
+
+    # ── FIR draft ──
+    _emit("generating_fir", "Generating FIR draft", None)
+    t0 = time.monotonic()
     fir_draft = _build_fir_draft(
         english_text,
         english_lines,
@@ -4447,6 +4902,9 @@ def parse_document(raw: str) -> dict[str, Any]:
         complaint_brief,
         review_questions,
     )
+    timing["fir_draft_ms"] = round((time.monotonic() - t0) * 1000, 1)
+
+    _emit("complete", "Complete", None)
 
     return {
         "schema_version": "3.0",
@@ -4477,6 +4935,7 @@ def parse_document(raw: str) -> dict[str, Any]:
             "complaint_assessment": complaint_assessment,
             "source_language_counts": language_detection["counts"],
             "extraction": extraction_meta,
+            "timing": timing,
         },
     }
 

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import io
+import json as _json
 import logging
 import os
+import queue
 import secrets
 import time
 from collections import defaultdict
@@ -358,6 +361,9 @@ async def health() -> JSONResponse:
             "openai_translation_enabled": translation_config["openai_enabled"],
             "openai_translation_model": translation_config["openai_model"],
             "openai_api_key_configured": translation_config["openai_api_key_configured"],
+            "gemini_translation_enabled": translation_config["gemini_enabled"],
+            "gemini_api_key_configured": translation_config["gemini_api_key_configured"],
+            "translation_qe_enabled": translation_config["quality_estimation_enabled"],
         },
     )
 
@@ -497,6 +503,139 @@ async def parse_uploaded_file(
             status_code=500,
             detail="Document processing failed. Check server logs for details.",
         ) from exc
+
+
+@app.post("/api/parse/stream")
+async def parse_uploaded_file_stream(
+    request: Request,
+    file: UploadFile = File(...),
+    _current_user: str = Depends(_require_authenticated_session),
+) -> StreamingResponse:
+    """SSE streaming variant of /api/parse — sends pipeline progress events."""
+    _check_rate_limit(_get_client_ip(request))
+    filename = Path(file.filename or "").name
+    content_type = file.content_type or ""
+
+    detected_mime = _detect_mime_type(filename, content_type)
+    if not detected_mime:
+        supported = ", ".join(sorted({ext.lstrip(".").upper() for ext in ACCEPTED_MIME_TYPES}))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type. Accepted formats: {supported}.",
+        )
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(content) > MAX_PARSE_UPLOAD_BYTES:
+        max_mb = MAX_PARSE_UPLOAD_BYTES // (1024 * 1024)
+        raise HTTPException(
+            status_code=413,
+            detail=f"Uploaded file exceeds the {max_mb} MB size limit.",
+        )
+
+    try:
+        config = get_doc_ai_config()
+    except RuntimeError as exc:
+        logger.warning("Document AI configuration unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail="Document AI configuration is not ready.") from exc
+
+    progress_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+
+    def _progress_cb(step_id: str, label: str, details: str | None) -> None:
+        progress_queue.put({"step": step_id, "label": label, "details": details})
+
+    async def _run_pipeline() -> dict[str, Any]:
+        _progress_cb("ocr", "Processing document with OCR", None)
+        result = await asyncio.to_thread(
+            process_document_bytes,
+            project_id=str(config["DOC_AI_PROJECT_ID"]),
+            location=str(config["DOC_AI_LOCATION"]),
+            processor_id=str(config["DOC_AI_PROCESSOR_ID"]),
+            content=content,
+            mime_type=detected_mime,
+            field_mask=config["DOC_AI_FIELD_MASK"],
+            credentials=config.get("_credentials"),
+        )
+        raw_text = result.document.text or ""
+        parsed_output = await asyncio.to_thread(
+            parse_document, raw_text, _progress_cb,
+        )
+        return {"raw_text": raw_text, "parsed_output": parsed_output}
+
+    async def _event_stream():
+        pipeline_task = asyncio.create_task(_run_pipeline())
+        pipeline_error: Exception | None = None
+        pipeline_result: dict[str, Any] | None = None
+
+        while not pipeline_task.done():
+            # Drain queued progress events
+            while True:
+                try:
+                    evt = progress_queue.get_nowait()
+                    yield f"data: {_json.dumps(evt)}\n\n"
+                except queue.Empty:
+                    break
+            await asyncio.sleep(0.1)
+
+        # Drain any remaining events after task completion
+        while True:
+            try:
+                evt = progress_queue.get_nowait()
+                yield f"data: {_json.dumps(evt)}\n\n"
+            except queue.Empty:
+                break
+
+        try:
+            pipeline_result = pipeline_task.result()
+        except Exception as exc:
+            pipeline_error = exc
+
+        if pipeline_error is not None:
+            err_msg = str(pipeline_error)
+            if _is_invalid_input_error(pipeline_error):
+                err_msg = "Uploaded file could not be processed as a valid document."
+            yield f"data: {_json.dumps({'step': 'error', 'label': 'Error', 'details': err_msg})}\n\n"
+            return
+
+        parsed_output = pipeline_result["parsed_output"]
+        raw_text = pipeline_result["raw_text"]
+        detected_format = (
+            parsed_output.get("meta", {}).get("detected_format")
+            if isinstance(parsed_output, dict) else None
+        )
+        document_format = detected_format or "UNKNOWN"
+
+        try:
+            record_id = await save_parse_record(
+                file_name=filename,
+                content=content,
+                parsed_output=parsed_output,
+                detected_format=document_format,
+            )
+        except Exception:
+            logger.exception("Failed to persist parse record to database")
+            yield f"data: {_json.dumps({'step': 'error', 'label': 'Error', 'details': 'Document parsed but could not be saved to history.'})}\n\n"
+            return
+
+        done_payload = {
+            "step": "done",
+            "label": "Complete",
+            "result": {
+                "id": record_id,
+                "file_name": filename,
+                "document_format": document_format,
+                "raw_text_length": len(raw_text),
+                "parsed_output": parsed_output,
+            },
+        }
+        yield f"data: {_json.dumps(done_payload)}\n\n"
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/history")

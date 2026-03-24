@@ -1704,6 +1704,65 @@
       font-weight: 500;
       white-space: nowrap;
     }
+    .pipeline-progress {
+      list-style: none;
+      margin: var(--space-3) 0 0 0;
+      padding: 0;
+      font-size: 0.82rem;
+    }
+    .pipeline-progress li {
+      display: flex;
+      align-items: center;
+      gap: 0.5em;
+      padding: 0.25em 0;
+      color: var(--color-text-muted);
+      transition: color 0.2s;
+    }
+    .pipeline-progress li .step-icon {
+      width: 1em;
+      height: 1em;
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .pipeline-progress li .step-icon::before {
+      content: "\25CB";
+      font-size: 0.7em;
+    }
+    .pipeline-progress li.active {
+      color: var(--color-primary);
+      font-weight: 500;
+    }
+    .pipeline-progress li.active .step-icon::before {
+      content: "";
+    }
+    .pipeline-progress li.active .step-icon::after {
+      content: "";
+      display: block;
+      width: 0.75em;
+      height: 0.75em;
+      border: 2px solid var(--color-primary);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: pipeline-spin 0.8s linear infinite;
+    }
+    @keyframes pipeline-spin {
+      to { transform: rotate(360deg); }
+    }
+    .pipeline-progress li.done {
+      color: var(--color-success, #16a34a);
+    }
+    .pipeline-progress li.done .step-icon::before {
+      content: "\2713";
+      font-weight: 700;
+    }
+    .pipeline-progress .step-time {
+      margin-left: auto;
+      font-size: 0.75rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--color-text-muted);
+    }
     .parse-controls {
       display: grid;
       grid-template-columns: 1fr;
@@ -2424,6 +2483,37 @@
       outline: none;
       border-color: var(--color-primary);
       box-shadow: var(--focus-ring);
+    }
+    .translation-original-block {
+      margin-bottom: var(--space-3);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+    }
+    .translation-original-summary {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--color-text-muted);
+      background: color-mix(in srgb, var(--color-border) 30%, var(--color-surface-alt));
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+    }
+    .translation-original-summary::-webkit-details-marker { display: none; }
+    .translation-original-body {
+      padding: var(--space-3);
+      font-size: 0.84rem;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      color: var(--color-text-muted);
+      background: var(--color-surface-alt);
+      border-top: 1px solid var(--color-border);
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -4596,6 +4686,7 @@
 
       var displayText = "";
       var labelHtml = "";
+      var originalBlockHtml = "";
       var hasText = false;
 
       if (translationStatus === "not_needed" || translationStatus === "") {
@@ -4610,6 +4701,14 @@
         labelHtml = "<div class='translation-label'>" + escapeHtml(detectedLang) + " <span class='lang-arrow'>&rarr;</span> English" +
           (provider ? " <span style='opacity:0.6'>via " + escapeHtml(provider.replace(/_/g, " ")) + "</span>" : "") +
         "</div>";
+        if (ocrText && ocrText !== englishText) {
+          originalBlockHtml = "<details class='translation-original-block'>" +
+            "<summary class='translation-original-summary'>" +
+              escapeHtml(detectedLang) + " original text" +
+            "</summary>" +
+            "<div class='translation-original-body'>" + escapeHtml(ocrText) + "</div>" +
+          "</details>";
+        }
       } else if (translationStatus === "failed") {
         var errMsg = lang.translation_error || "Unknown error";
         translationPreview.innerHTML =
@@ -4651,6 +4750,7 @@
         "<div class='translation-actions'>" +
           "<button id='translationEditBtn' class='btn btn-secondary' type='button'>Edit</button>" +
         "</div>" +
+        originalBlockHtml +
         "<div>" + escapeHtml(displayText) + "</div>";
       var editBtn = document.getElementById("translationEditBtn");
       if (editBtn) editBtn.addEventListener("click", startTranslationEdit);
@@ -6013,6 +6113,122 @@
       return data;
     }
 
+    /* ── Pipeline Progress Helpers ── */
+    var PIPELINE_STEPS = [
+      { id: "ocr", label: "Processing document" },
+      { id: "detecting_language", label: "Detecting language" },
+      { id: "translating", label: "Translating complaint" },
+      { id: "extracting_fields", label: "Extracting fields" },
+      { id: "llm_extraction", label: "AI-guided extraction" },
+      { id: "generating_fir", label: "Generating FIR draft" },
+      { id: "complete", label: "Complete" },
+    ];
+    var _pipelineStepTimers = {};
+
+    function initPipelineProgress() {
+      var ul = document.getElementById("pipelineProgress");
+      if (!ul) return;
+      ul.style.display = "";
+      ul.innerHTML = PIPELINE_STEPS.map(function(s) {
+        return "<li id='ps-" + s.id + "'><span class='step-icon'></span><span class='step-label'>" +
+          escapeHtml(s.label) + "</span><span class='step-time'></span></li>";
+      }).join("");
+      _pipelineStepTimers = {};
+    }
+
+    function updatePipelineStep(stepId, details) {
+      var now = performance.now();
+      // Mark previous active step as done
+      PIPELINE_STEPS.forEach(function(s) {
+        var li = document.getElementById("ps-" + s.id);
+        if (!li) return;
+        if (li.classList.contains("active")) {
+          li.classList.remove("active");
+          li.classList.add("done");
+          if (_pipelineStepTimers[s.id] != null) {
+            var elapsed = ((now - _pipelineStepTimers[s.id]) / 1000).toFixed(1);
+            var timeEl = li.querySelector(".step-time");
+            if (timeEl) timeEl.textContent = elapsed + "s";
+          }
+        }
+      });
+      // Activate current step
+      var current = document.getElementById("ps-" + stepId);
+      if (current && !current.classList.contains("done")) {
+        current.classList.add("active");
+        _pipelineStepTimers[stepId] = now;
+        if (details) {
+          var lbl = current.querySelector(".step-label");
+          var stepDef = PIPELINE_STEPS.find(function(s) { return s.id === stepId; });
+          if (lbl && stepDef) lbl.textContent = stepDef.label + " \u2014 " + details;
+        }
+      }
+    }
+
+    function finalizePipelineProgress() {
+      updatePipelineStep("complete", null);
+      // Mark complete as done immediately
+      var li = document.getElementById("ps-complete");
+      if (li) {
+        li.classList.remove("active");
+        li.classList.add("done");
+      }
+    }
+
+    function hidePipelineProgress() {
+      var ul = document.getElementById("pipelineProgress");
+      if (ul) ul.style.display = "none";
+    }
+
+    async function requestParseFileStream(file, onProgress) {
+      if (!state.network.isOnline) {
+        throw new Error("Offline mode: reconnect before parsing.");
+      }
+      var formData = new FormData();
+      formData.append("file", file);
+      var response = await fetch("api/parse/stream", {
+        method: "POST",
+        body: formData
+      });
+      if (response.status === 401) {
+        handleAuthRequired();
+        throw new Error(AUTH_REQUIRED_MESSAGE);
+      }
+      if (!response.ok) {
+        var errBody = null;
+        try { errBody = await response.json(); } catch(_) {}
+        var detail = errBody && errBody.detail ? errBody.detail : "Failed to parse document.";
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      }
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = "";
+      var finalResult = null;
+      while (true) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        var lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i];
+          if (!line.startsWith("data: ")) continue;
+          var evt;
+          try { evt = JSON.parse(line.slice(6)); } catch(_) { continue; }
+          if (evt.step === "error") {
+            throw new Error(evt.details || "Pipeline error");
+          }
+          if (evt.step === "done") {
+            finalResult = evt.result;
+          } else if (onProgress) {
+            onProgress(evt);
+          }
+        }
+      }
+      if (!finalResult) throw new Error("Stream ended without result.");
+      return finalResult;
+    }
+
     var dropzoneOriginalHtml = dropzone.innerHTML;
     function resetDropzoneContent() {
       dropzone.innerHTML = dropzoneOriginalHtml;
@@ -6033,7 +6249,8 @@
             "<span class='file-info-size'>" + escapeHtml(sizeStr) + "</span>" +
           "</div>" +
           "<div id='uploadStatusLine' class='upload-status'></div>" +
-        "</div>";
+        "</div>" +
+        "<ul id='pipelineProgress' class='pipeline-progress' style='display:none'></ul>";
     }
     function setUploadStatus(text) {
       var el = document.getElementById("uploadStatusLine");
@@ -6096,12 +6313,14 @@
       state.error = null;
       setParseLoading(true);
       updateParseActionStates();
-      setUploadStatus("Uploading\u2026");
+      setUploadStatus("");
+      initPipelineProgress();
 
       try {
-        setUploadStatus("Processing\u2026");
-        const data = await requestParseFile(state.file);
-        setUploadStatus("Analysing\u2026");
+        const data = await requestParseFileStream(state.file, function(event) {
+          updatePipelineStep(event.step, event.details || null);
+        });
+        finalizePipelineProgress();
         state.result = data.parsed_output || data;
         state.apiResponse = data;
         state.activeFileName = data.file_name || (state.file ? state.file.name : state.activeFileName);
@@ -6123,6 +6342,7 @@
         setStatus("Parse failed: " + message, "error");
       }
 
+      hidePipelineProgress();
       state.isParsing = false;
       setParseLoading(false);
       updateParseActionStates();
