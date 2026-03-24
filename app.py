@@ -289,7 +289,7 @@ async def lifespan(app_instance: FastAPI):
     await dispose_engine()
 
 
-app = FastAPI(title="Complaint Analyser", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="ADS Complaint Analyser", version="1.1.0", lifespan=lifespan)
 
 app.add_middleware(
     SessionMiddleware,
