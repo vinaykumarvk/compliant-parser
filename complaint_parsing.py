@@ -2429,8 +2429,8 @@ def _value_supported_by_source(
         "what": 0.45,
         "when": 0.5,
         "where": 0.5,
-        "why": 0.45,
-        "how": 0.45,
+        "why": 0.30,
+        "how": 0.35,
     }.get(field_name, 0.5)
     if field_name == "why":
         normalized_value = _normalize_match_text(cleaned)
@@ -2449,6 +2449,44 @@ def _value_supported_by_source(
                 "snatched",
             )
         ):
+            return True
+
+        # Fraud/cheating motives
+        if any(phrase in normalized_value for phrase in (
+            "financial fraud", "cheat", "deceiv", "scam", "misappropriat",
+            "embezzl", "not refund", "failed to refund", "refuse", "did not arrange",
+            "failed to deliver", "money", "fraud",
+        )) and any(phrase in normalized_support for phrase in (
+            "paid", "amount", "money", "refund", "rs", "rupees", "lakh",
+            "bank", "account", "otp", "transfer", "debit", "job", "placement",
+        )):
+            return True
+
+        # Robbery/theft motives
+        if any(phrase in normalized_value for phrase in (
+            "robbery", "theft", "steal", "loot", "snatch", "opportunistic",
+        )) and any(phrase in normalized_support for phrase in (
+            "snatched", "stole", "stolen", "wallet", "chain", "ring",
+            "ornament", "took", "missing", "gold", "mobile",
+        )):
+            return True
+
+        # Harassment/domestic/dispute motives
+        if any(phrase in normalized_value for phrase in (
+            "harassment", "dowry", "domestic", "property dispute", "land dispute",
+            "personal enmity", "grudge", "revenge", "extort", "intimidat",
+        )) and any(phrase in normalized_support for phrase in (
+            "harass", "dowry", "dispute", "enmity", "threat", "quarrel",
+            "fight", "demand", "extort",
+        )):
+            return True
+
+        # Assault/violence motives
+        if any(phrase in normalized_value for phrase in (
+            "assault", "attack", "murder", "kill", "altercation", "rage",
+        )) and any(phrase in normalized_support for phrase in (
+            "hit", "beat", "attack", "stab", "injur", "wound", "kill", "rod", "knife",
+        )):
             return True
     return overlap_ratio >= threshold
 
@@ -3374,11 +3412,30 @@ def _extract_where(lines: list[str], sentences: list[str]) -> dict[str, Any]:
     return _make_field_payload(value, [evidence], confidence, status="present")
 
 
+def _is_why_value_meaningful(value: str) -> bool:
+    """Reject garbage WHY fragments like 'of this' from label-based extraction."""
+    cleaned = _clean_extracted_value(value)
+    if not cleaned:
+        return False
+    words = cleaned.split()
+    if len(words) < 4:
+        return False
+    lowered = cleaned.lower()
+    if any(lowered.startswith(prefix) for prefix in _REASON_NOISE_PREFIXES):
+        return False
+    stopwords = {"of", "this", "the", "a", "an", "is", "was", "for", "to", "in", "it", "that", "and", "or"}
+    meaningful_words = [w for w in words if w.lower() not in stopwords]
+    if len(meaningful_words) < 2:
+        return False
+    return True
+
+
 def _extract_why(lines: list[str], sentences: list[str]) -> dict[str, Any]:
     labeled_matches = _extract_labeled_values(lines, _WHY_LABELS, max_matches=2)
     if labeled_matches:
         value, evidence = labeled_matches[0]
-        return _make_field_payload(value, [evidence], 0.82, status="present")
+        if _is_why_value_meaningful(value):
+            return _make_field_payload(value, [evidence], 0.82, status="present")
 
     candidate_sentences = [
         sentence
