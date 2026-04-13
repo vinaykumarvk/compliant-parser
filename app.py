@@ -318,9 +318,10 @@ async def _seed_reference_data() -> None:
 
     factory = await get_session_factory()
     async with factory() as session:
-        await seed_police_stations(session)
-        await seed_offence_types(session)
-        await seed_templates(session)
+        with session.no_autoflush:
+            await seed_police_stations(session)
+            await seed_offence_types(session)
+            await seed_templates(session)
         await session.commit()
     logger.info("Seeded reference data (police stations, offence types, templates)")
 

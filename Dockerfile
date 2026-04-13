@@ -29,8 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
+COPY requirements.txt .
 COPY --from=builder /wheels /wheels
-RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+RUN pip install --no-cache-dir --find-links=/wheels -r requirements.txt && rm -rf /wheels
 
 RUN adduser --disabled-password --gecos "" --home /home/appuser appuser
 
