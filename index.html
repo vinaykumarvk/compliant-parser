@@ -3280,6 +3280,217 @@
       font-size: 0.88rem;
       font-weight: 600;
     }
+
+    /* ── IQW Phase 1: Notification Bell ── */
+    .notif-bell-wrap { position: relative; margin-left: auto; margin-right: var(--space-3); }
+    .notif-bell-btn { background: none; border: none; cursor: pointer; padding: var(--space-2); color: var(--color-text-muted); position: relative; border-radius: var(--radius-sm); transition: background 0.15s; }
+    .notif-bell-btn:hover { background: var(--color-bg-accent); color: var(--color-text); }
+    .notif-bell-btn svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .notif-badge { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; background: var(--color-error); color: #fff; font-size: 0.65rem; font-weight: 700; border-radius: 99px; display: flex; align-items: center; justify-content: center; padding: 0 4px; pointer-events: none; }
+    .notif-badge.mode-hidden { display: none; }
+    .notif-dropdown { position: absolute; top: calc(100% + 6px); right: 0; width: 340px; max-height: 400px; overflow-y: auto; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-strong); z-index: 999; display: none; }
+    .notif-dropdown.is-open { display: block; }
+    .notif-dropdown-header { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); font-weight: 600; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; }
+    .notif-dropdown-header button { background: none; border: none; color: var(--color-primary); cursor: pointer; font-size: 0.78rem; font-weight: 500; }
+    .notif-item { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); cursor: pointer; transition: background 0.15s; display: flex; gap: var(--space-3); }
+    .notif-item:hover { background: var(--color-bg-accent); }
+    .notif-item.unread { background: var(--color-surface-alt); }
+    .notif-item-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-primary); flex-shrink: 0; margin-top: 6px; }
+    .notif-item.unread .notif-item-dot { background: var(--color-primary); }
+    .notif-item:not(.unread) .notif-item-dot { background: transparent; }
+    .notif-item-body { flex: 1; min-width: 0; }
+    .notif-item-msg { font-size: 0.82rem; color: var(--color-text); line-height: 1.4; }
+    .notif-item-time { font-size: 0.72rem; color: var(--color-text-muted); margin-top: 2px; }
+    .notif-empty { padding: var(--space-6); text-align: center; color: var(--color-text-muted); font-size: 0.85rem; }
+
+    /* ── IQW Phase 1: View Sections ── */
+    .iqw-view { padding: var(--space-6); display: none; }
+    .iqw-view.is-active { display: block; }
+    .iqw-view-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-6); flex-wrap: wrap; gap: var(--space-3); }
+    .iqw-view-header h2 { font-size: 1.25rem; font-weight: 700; margin: 0; }
+    .iqw-view-toolbar { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; margin-bottom: var(--space-4); }
+    .iqw-search-input { flex: 1; min-width: 180px; max-width: 320px; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: 0.85rem; font-family: var(--font-body); }
+    .iqw-search-input:focus { outline: none; box-shadow: var(--focus-ring); }
+    .iqw-select { padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: 0.82rem; font-family: var(--font-body); }
+
+    /* ── Case Cards ── */
+    .case-card-list { display: flex; flex-direction: column; gap: var(--space-3); }
+    .case-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4); cursor: pointer; transition: box-shadow 0.15s, border-color 0.15s; }
+    .case-card:hover { box-shadow: var(--shadow-soft); border-color: var(--color-primary); }
+    .case-card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-2); }
+    .case-card-title { font-weight: 600; font-size: 0.92rem; color: var(--color-text); }
+    .case-card-meta { font-size: 0.78rem; color: var(--color-text-muted); display: flex; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-1); }
+    .case-card-brief { font-size: 0.82rem; color: var(--color-text-muted); margin-top: var(--space-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+    /* ── Status Badges ── */
+    .status-badge { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+    .status-badge--draft { background: var(--color-bg-accent); color: var(--color-text-muted); }
+    .status-badge--open { background: rgba(37,99,235,0.12); color: var(--color-primary); }
+    .status-badge--investigation { background: rgba(217,119,6,0.12); color: var(--color-warning); }
+    .status-badge--review { background: rgba(139,92,246,0.12); color: #8b5cf6; }
+    .status-badge--closed { background: rgba(15,118,110,0.12); color: var(--color-success); }
+    .status-badge--archived { background: var(--color-bg-accent); color: var(--color-text-muted); }
+
+    /* ── Tab Bar ── */
+    .iqw-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--color-border); margin-bottom: var(--space-4); }
+    .iqw-tab { background: none; border: none; padding: var(--space-3) var(--space-4); font-size: 0.85rem; font-weight: 500; color: var(--color-text-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: color 0.15s, border-color 0.15s; font-family: var(--font-body); }
+    .iqw-tab:hover { color: var(--color-text); }
+    .iqw-tab.is-active { color: var(--color-primary); border-bottom-color: var(--color-primary); font-weight: 600; }
+    .iqw-tab-panel { display: none; }
+    .iqw-tab-panel.is-active { display: block; }
+
+    /* ── Case Detail ── */
+    .case-detail-header { display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4); flex-wrap: wrap; }
+    .case-detail-header h2 { font-size: 1.15rem; font-weight: 700; margin: 0; }
+    .case-detail-back { background: none; border: none; cursor: pointer; color: var(--color-text-muted); padding: var(--space-2); border-radius: var(--radius-sm); display: flex; align-items: center; gap: var(--space-1); font-family: var(--font-body); font-size: 0.85rem; }
+    .case-detail-back:hover { color: var(--color-text); background: var(--color-bg-accent); }
+    .case-detail-back svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; }
+    .case-detail-actions { margin-left: auto; display: flex; gap: var(--space-2); }
+    .case-info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-3); margin-bottom: var(--space-4); }
+    .case-info-item label { display: block; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-muted); margin-bottom: 2px; }
+    .case-info-item span { font-size: 0.88rem; font-weight: 500; color: var(--color-text); }
+
+    /* ── Timeline ── */
+    .timeline { position: relative; padding-left: 24px; }
+    .timeline::before { content: ""; position: absolute; left: 7px; top: 0; bottom: 0; width: 2px; background: var(--color-border); }
+    .timeline-entry { position: relative; padding-bottom: var(--space-4); }
+    .timeline-entry::before { content: ""; position: absolute; left: -20px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--color-primary); border: 2px solid var(--color-surface); }
+    .timeline-entry-time { font-size: 0.72rem; color: var(--color-text-muted); margin-bottom: 2px; }
+    .timeline-entry-text { font-size: 0.85rem; color: var(--color-text); }
+    .timeline-entry-actor { font-size: 0.75rem; color: var(--color-text-muted); }
+
+    /* ── Task Items ── */
+    .task-list { display: flex; flex-direction: column; gap: var(--space-2); }
+    .task-item { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); background: var(--color-surface-alt); border-radius: var(--radius-sm); border: 1px solid var(--color-border); }
+    .task-item-name { flex: 1; font-size: 0.85rem; }
+    .task-item-priority { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; }
+    .task-item-priority--high { color: var(--color-error); }
+    .task-item-priority--medium { color: var(--color-warning); }
+    .task-item-priority--low { color: var(--color-success); }
+    .task-item-status { font-size: 0.72rem; padding: 2px 8px; border-radius: 99px; background: var(--color-bg-accent); color: var(--color-text-muted); }
+    .task-item-status--done { background: rgba(15,118,110,0.12); color: var(--color-success); }
+
+    /* ── Case Document List ── */
+    .case-doc-list { display: flex; flex-direction: column; gap: var(--space-2); }
+    .case-doc-item { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); background: var(--color-surface-alt); border-radius: var(--radius-sm); border: 1px solid var(--color-border); }
+    .case-doc-item-name { flex: 1; font-size: 0.85rem; font-weight: 500; }
+    .case-doc-item-type { font-size: 0.72rem; padding: 2px 8px; border-radius: 99px; background: var(--color-bg-accent); color: var(--color-text-muted); }
+    .case-doc-item-hash { font-size: 0.7rem; color: var(--color-text-muted); font-family: var(--font-mono); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Quality Check ── */
+    .qc-form { display: flex; flex-direction: column; gap: var(--space-4); max-width: 720px; }
+    .qc-textarea { width: 100%; min-height: 160px; padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: 0.85rem; font-family: var(--font-body); resize: vertical; }
+    .qc-textarea:focus { outline: none; box-shadow: var(--focus-ring); }
+    .qc-results { margin-top: var(--space-6); }
+    .qc-score-ring { width: 100px; height: 100px; margin: 0 auto var(--space-4); }
+    .qc-score-ring circle { fill: none; stroke-width: 8; }
+    .qc-score-ring .ring-bg { stroke: var(--color-border); }
+    .qc-score-ring .ring-fg { stroke: var(--color-primary); stroke-linecap: round; transition: stroke-dashoffset 0.6s ease; }
+    .qc-score-label { font-size: 1.5rem; font-weight: 700; text-anchor: middle; fill: var(--color-text); }
+    .qc-stats { display: flex; gap: var(--space-4); justify-content: center; margin-bottom: var(--space-4); flex-wrap: wrap; }
+    .qc-stat { text-align: center; padding: var(--space-3) var(--space-4); background: var(--color-surface-alt); border-radius: var(--radius-sm); border: 1px solid var(--color-border); min-width: 100px; }
+    .qc-stat-value { font-size: 1.3rem; font-weight: 700; }
+    .qc-stat-label { font-size: 0.72rem; color: var(--color-text-muted); text-transform: uppercase; }
+    .qc-finding { padding: var(--space-3) var(--space-4); border-left: 3px solid var(--color-border); margin-bottom: var(--space-2); background: var(--color-surface-alt); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+    .qc-finding--high { border-left-color: var(--color-error); }
+    .qc-finding--medium { border-left-color: var(--color-warning); }
+    .qc-finding--low { border-left-color: var(--color-info); }
+    .qc-finding-header { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); }
+    .qc-finding-item { font-weight: 600; font-size: 0.85rem; }
+    .qc-finding-detail { font-size: 0.82rem; color: var(--color-text-muted); }
+    .severity-badge { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 0.68rem; font-weight: 700; text-transform: uppercase; }
+    .severity-badge--high { background: rgba(180,35,24,0.12); color: var(--color-error); }
+    .severity-badge--medium { background: rgba(217,119,6,0.12); color: var(--color-warning); }
+    .severity-badge--low { background: rgba(51,65,85,0.12); color: var(--color-info); }
+
+    /* ── Trial Risk ── */
+    .qc-trial-risks { margin-top: var(--space-4); }
+    .qc-trial-risk { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); margin-bottom: var(--space-2); font-size: 0.85rem; }
+    .qc-trial-risk--high { background: rgba(180,35,24,0.08); color: var(--color-error); }
+    .qc-trial-risk--medium { background: rgba(217,119,6,0.08); color: var(--color-warning); }
+    .qc-trial-risk--low { background: rgba(51,65,85,0.08); color: var(--color-info); }
+
+    /* ── Document Generation ── */
+    .docgen-layout { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+    @media (max-width: 768px) { .docgen-layout { grid-template-columns: 1fr; } }
+    .template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-3); }
+    .template-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4); cursor: pointer; transition: box-shadow 0.15s, border-color 0.15s; }
+    .template-card:hover { box-shadow: var(--shadow-soft); border-color: var(--color-primary); }
+    .template-card.is-selected { border-color: var(--color-primary); box-shadow: 0 0 0 2px rgba(37,99,235,0.2); }
+    .template-card-title { font-weight: 600; font-size: 0.88rem; margin-bottom: var(--space-1); }
+    .template-card-cat { font-size: 0.72rem; padding: 2px 8px; border-radius: 99px; background: var(--color-bg-accent); color: var(--color-text-muted); display: inline-block; }
+    .docgen-workspace { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4); }
+    .docgen-preview { background: var(--color-surface-alt); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--space-4); min-height: 200px; white-space: pre-wrap; font-size: 0.85rem; line-height: 1.6; color: var(--color-text); }
+    .docgen-preview .missing-field { background: rgba(217,119,6,0.15); padding: 1px 4px; border-radius: 3px; color: var(--color-warning); font-weight: 600; }
+    .docgen-field-group { margin-bottom: var(--space-3); }
+    .docgen-field-group label { display: block; font-size: 0.78rem; font-weight: 600; margin-bottom: var(--space-1); color: var(--color-text-muted); }
+    .docgen-field-group input, .docgen-field-group textarea { width: 100%; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: 0.85rem; font-family: var(--font-body); }
+    .docgen-export-bar { display: flex; gap: var(--space-2); margin-top: var(--space-4); }
+
+    /* ── Admin Panel ── */
+    .admin-user-list { display: flex; flex-direction: column; gap: var(--space-2); }
+    .admin-user-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+    .admin-user-row-name { flex: 1; font-weight: 500; font-size: 0.88rem; }
+    .admin-user-row-id { font-size: 0.78rem; color: var(--color-text-muted); font-family: var(--font-mono); }
+    .role-badge { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; background: var(--color-bg-accent); color: var(--color-text-muted); }
+    .role-badge--admin { background: rgba(139,92,246,0.12); color: #8b5cf6; }
+    .role-badge--analyst { background: rgba(37,99,235,0.12); color: var(--color-primary); }
+
+    /* ── Audit Log Table ── */
+    .audit-table-wrap { overflow-x: auto; }
+    .audit-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .audit-table th { text-align: left; padding: var(--space-2) var(--space-3); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-muted); border-bottom: 2px solid var(--color-border); }
+    .audit-table td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--color-border); color: var(--color-text); }
+    .audit-table tr:hover td { background: var(--color-surface-alt); }
+    .audit-filter-bar { display: flex; gap: var(--space-3); flex-wrap: wrap; margin-bottom: var(--space-4); align-items: flex-end; }
+    .audit-filter-bar label { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; color: var(--color-text-muted); display: flex; flex-direction: column; gap: 2px; }
+    .audit-filter-bar input, .audit-filter-bar select { padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: 0.82rem; font-family: var(--font-body); }
+
+    /* ── Pagination ── */
+    .iqw-pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-2); margin-top: var(--space-4); }
+    .iqw-pagination button { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); font-size: 0.82rem; cursor: pointer; color: var(--color-text); font-family: var(--font-body); }
+    .iqw-pagination button:disabled { opacity: 0.4; cursor: default; }
+    .iqw-pagination button.is-active { background: var(--color-primary); color: var(--color-primary-contrast); border-color: var(--color-primary); }
+    .iqw-pagination-info { font-size: 0.78rem; color: var(--color-text-muted); }
+
+    /* ── Modals ── */
+    .iqw-modal { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; }
+    .iqw-modal.is-visible { display: flex; }
+    .iqw-modal-card { background: var(--color-surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-strong); width: 90%; max-width: 560px; max-height: 85vh; overflow-y: auto; }
+    .iqw-modal-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-4); border-bottom: 1px solid var(--color-border); }
+    .iqw-modal-header h3 { font-size: 1rem; font-weight: 700; margin: 0; }
+    .iqw-modal-close { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--color-text-muted); line-height: 1; }
+    .iqw-modal-body { padding: var(--space-4); }
+    .iqw-modal-body .form-group { margin-bottom: var(--space-3); }
+    .iqw-modal-body .form-group label { display: block; font-size: 0.78rem; font-weight: 600; margin-bottom: 4px; color: var(--color-text-muted); }
+    .iqw-modal-body .form-group input,
+    .iqw-modal-body .form-group select,
+    .iqw-modal-body .form-group textarea { width: 100%; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-alt); color: var(--color-text); font-size: 0.85rem; font-family: var(--font-body); }
+    .iqw-modal-body .form-group textarea { min-height: 80px; resize: vertical; }
+    .iqw-modal-footer { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border); display: flex; justify-content: flex-end; gap: var(--space-2); }
+    .iqw-form-error { color: var(--color-error); font-size: 0.78rem; margin-top: 2px; }
+
+    /* ── Sidebar nav additions ── */
+    .sidebar-nav-divider { height: 1px; background: var(--color-border); margin: var(--space-2) var(--space-3); }
+    .sidebar-nav-item.admin-only { display: none; }
+    .sidebar-nav-item.admin-only.is-visible { display: flex; }
+
+    /* ── Upload area for case docs ── */
+    .case-doc-upload { display: flex; gap: var(--space-2); align-items: flex-end; flex-wrap: wrap; margin-bottom: var(--space-3); }
+    .case-doc-upload input[type="file"] { font-size: 0.82rem; }
+
+    /* ── Inline task form ── */
+    .task-inline-form { display: flex; gap: var(--space-2); align-items: flex-end; flex-wrap: wrap; padding: var(--space-3); background: var(--color-surface-alt); border-radius: var(--radius-sm); border: 1px dashed var(--color-border); margin-top: var(--space-3); }
+    .task-inline-form input, .task-inline-form select { padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font-size: 0.82rem; font-family: var(--font-body); }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      .iqw-view { padding: var(--space-4); }
+      .case-info-grid { grid-template-columns: 1fr; }
+      .qc-stats { flex-direction: column; align-items: center; }
+      .notif-dropdown { width: calc(100vw - 32px); right: -60px; }
+      .audit-filter-bar { flex-direction: column; }
+    }
   </style>
 </head>
 <body>
@@ -3348,6 +3559,19 @@
         <div>
           <h1><span class="brand-accent">ADS</span> Complaint Analyser</h1>
           <p>Intelligent complaint analysis &amp; parsing</p>
+        </div>
+      </div>
+      <div class="notif-bell-wrap" id="notifBellWrap">
+        <button id="notifBellBtn" class="notif-bell-btn" type="button" aria-label="Notifications" aria-expanded="false">
+          <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span id="notifBadge" class="notif-badge mode-hidden">0</span>
+        </button>
+        <div id="notifDropdown" class="notif-dropdown" role="menu">
+          <div class="notif-dropdown-header">
+            <span>Notifications</span>
+            <button id="notifMarkAllBtn" type="button">Mark all read</button>
+          </div>
+          <div id="notifList"></div>
         </div>
       </div>
       <div class="user-menu-wrapper" id="userMenuWrapper">
@@ -3449,6 +3673,23 @@
         <button id="navCompareBtn" class="sidebar-nav-item" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/><path d="M7 8h-2M7 12h-2M7 16h-2M19 8h-2M19 12h-2M19 16h-2"/></svg>
           Compare
+        </button>
+        <div class="sidebar-nav-divider"></div>
+        <button id="navCasesBtn" class="sidebar-nav-item" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          Cases
+        </button>
+        <button id="navQualityBtn" class="sidebar-nav-item" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Quality Check
+        </button>
+        <button id="navDocGenBtn" class="sidebar-nav-item" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Doc Gen
+        </button>
+        <button id="navAdminBtn" class="sidebar-nav-item admin-only" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          Admin
         </button>
         <div class="sidebar-nav-spacer"></div>
         <button id="sidebarNewParseBtn" class="sidebar-nav-item sidebar-new-parse-btn" type="button">
@@ -3608,6 +3849,165 @@
         <div id="compareResults" class="compare-results"></div>
       </section>
 
+      <!-- ── IQW: Case List View ── -->
+      <section id="caseListView" class="iqw-view">
+        <div class="iqw-view-header">
+          <h2>Cases</h2>
+          <button id="caseNewBtn" class="btn btn-primary" type="button">
+            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span class="btn-label">New Case</span>
+          </button>
+        </div>
+        <div class="iqw-view-toolbar">
+          <input id="caseSearchInput" class="iqw-search-input" type="text" placeholder="Search cases..." autocomplete="off">
+          <select id="caseStatusFilter" class="iqw-select"><option value="">All Statuses</option><option value="Draft">Draft</option><option value="Open">Open</option><option value="Under Investigation">Investigation</option><option value="Under Review">Review</option><option value="Closed">Closed</option><option value="Archived">Archived</option></select>
+          <input id="caseDateFrom" class="iqw-select" type="date" title="From date">
+          <input id="caseDateTo" class="iqw-select" type="date" title="To date">
+        </div>
+        <div id="caseCardList" class="case-card-list"></div>
+        <div id="casePagination" class="iqw-pagination"></div>
+      </section>
+
+      <!-- ── IQW: Case Detail View ── -->
+      <section id="caseDetailView" class="iqw-view">
+        <div class="case-detail-header">
+          <button id="caseDetailBack" class="case-detail-back" type="button" aria-label="Back to cases">
+            <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+            Cases
+          </button>
+          <h2 id="caseDetailTitle">Case</h2>
+          <span id="caseDetailBadge" class="status-badge"></span>
+          <div class="case-detail-actions">
+            <button id="caseEditBtn" class="btn btn-secondary" type="button">Edit</button>
+            <button id="caseTransitionBtn" class="btn btn-primary" type="button">Transition Status</button>
+            <button id="caseGenDocBtn" class="btn btn-secondary" type="button">Generate Document</button>
+          </div>
+        </div>
+        <div class="iqw-tabs" role="tablist" aria-label="Case detail tabs">
+          <button class="iqw-tab is-active" data-tab="caseTabDetails" role="tab" aria-selected="true" type="button">Details</button>
+          <button class="iqw-tab" data-tab="caseTabDocuments" role="tab" aria-selected="false" type="button">Documents</button>
+          <button class="iqw-tab" data-tab="caseTabTimeline" role="tab" aria-selected="false" type="button">Timeline</button>
+          <button class="iqw-tab" data-tab="caseTabTasks" role="tab" aria-selected="false" type="button">Tasks</button>
+        </div>
+        <div id="caseTabDetails" class="iqw-tab-panel is-active" role="tabpanel">
+          <div id="caseInfoGrid" class="case-info-grid"></div>
+          <div id="caseBriefFacts" style="margin-top:var(--space-4)"></div>
+        </div>
+        <div id="caseTabDocuments" class="iqw-tab-panel" role="tabpanel">
+          <div class="case-doc-upload">
+            <select id="caseDocTypeSelect" class="iqw-select"><option value="FIR">FIR</option><option value="Complaint">Complaint</option><option value="Statement">Statement</option><option value="Evidence">Evidence</option><option value="Report">Report</option><option value="Other">Other</option></select>
+            <input id="caseDocFileInput" type="file" accept=".pdf,.docx,.jpg,.jpeg,.png,.tiff,.tif">
+            <button id="caseDocUploadBtn" class="btn btn-primary" type="button">Upload</button>
+            <button id="caseDocQcBtn" class="btn btn-secondary" type="button">Run Quality Check</button>
+          </div>
+          <div id="caseDocList" class="case-doc-list"></div>
+        </div>
+        <div id="caseTabTimeline" class="iqw-tab-panel" role="tabpanel">
+          <div id="caseTimeline" class="timeline"></div>
+        </div>
+        <div id="caseTabTasks" class="iqw-tab-panel" role="tabpanel">
+          <div id="caseTaskList" class="task-list"></div>
+          <div class="task-inline-form" id="caseTaskForm">
+            <input id="caseTaskName" type="text" placeholder="Task name..." style="flex:1">
+            <input id="caseTaskDue" type="date" title="Due date">
+            <select id="caseTaskPriority" class="iqw-select"><option value="medium">Medium</option><option value="high">High</option><option value="low">Low</option></select>
+            <button id="caseTaskAddBtn" class="btn btn-primary" type="button">Add Task</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── IQW: Quality Check View ── -->
+      <section id="qualityCheckView" class="iqw-view">
+        <div class="iqw-view-header">
+          <h2>Quality Check</h2>
+        </div>
+        <div class="qc-form">
+          <div class="form-group">
+            <label for="qcDocType">Document Type</label>
+            <select id="qcDocType" class="iqw-select"><option value="FIR">FIR</option><option value="Complaint">Complaint</option><option value="Chargesheet">Chargesheet</option><option value="Statement">Statement</option><option value="Generic">Generic</option></select>
+          </div>
+          <div class="form-group">
+            <label for="qcOffenceType">Offence Type (optional)</label>
+            <input id="qcOffenceType" class="iqw-search-input" type="text" placeholder="e.g. Theft, Murder..." style="max-width:100%">
+          </div>
+          <div class="form-group">
+            <label for="qcText">Document Text</label>
+            <textarea id="qcText" class="qc-textarea" placeholder="Paste document text here..."></textarea>
+          </div>
+          <button id="qcRunBtn" class="btn btn-primary" type="button">
+            <span class="spinner" aria-hidden="true"></span>
+            <span class="btn-label">Run Quality Check</span>
+          </button>
+        </div>
+        <div id="qcResults" class="qc-results" style="display:none"></div>
+      </section>
+
+      <!-- ── IQW: Document Generation View ── -->
+      <section id="docGenView" class="iqw-view">
+        <div class="iqw-view-header">
+          <h2>Document Generation</h2>
+          <div style="display:flex;gap:var(--space-2);align-items:center">
+            <select id="docGenCatFilter" class="iqw-select"><option value="">All Categories</option></select>
+          </div>
+        </div>
+        <div class="docgen-layout">
+          <div>
+            <h3 style="font-size:0.92rem;font-weight:600;margin-bottom:var(--space-3)">Templates</h3>
+            <div id="templateGrid" class="template-grid"></div>
+          </div>
+          <div id="docGenWorkspace" class="docgen-workspace" style="display:none">
+            <h3 id="docGenTemplateName" style="font-size:0.92rem;font-weight:600;margin-bottom:var(--space-3)">Select a template</h3>
+            <div id="docGenFields"></div>
+            <div style="display:flex;gap:var(--space-2);margin-top:var(--space-3)">
+              <button id="docGenGenerateBtn" class="btn btn-primary" type="button">Generate</button>
+              <button id="docGenEditBtn" class="btn btn-secondary" type="button" style="display:none">Edit</button>
+              <button id="docGenSaveBtn" class="btn btn-secondary" type="button" style="display:none">Save Edits</button>
+            </div>
+            <div id="docGenPreviewWrap" style="margin-top:var(--space-4);display:none">
+              <h4 style="font-size:0.85rem;font-weight:600;margin-bottom:var(--space-2)">Preview</h4>
+              <div id="docGenPreview" class="docgen-preview"></div>
+              <div class="docgen-export-bar">
+                <button id="docGenExportDocx" class="btn btn-secondary" type="button">Export DOCX</button>
+                <button id="docGenExportPdf" class="btn btn-secondary" type="button">Export PDF</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── IQW: Admin View ── -->
+      <section id="adminView" class="iqw-view">
+        <div class="iqw-view-header">
+          <h2>Admin Panel</h2>
+        </div>
+        <div class="iqw-tabs" role="tablist" aria-label="Admin tabs">
+          <button class="iqw-tab is-active" data-tab="adminTabUsers" role="tab" aria-selected="true" type="button">Users</button>
+          <button class="iqw-tab" data-tab="adminTabAudit" role="tab" aria-selected="false" type="button">Audit Logs</button>
+        </div>
+        <div id="adminTabUsers" class="iqw-tab-panel is-active" role="tabpanel">
+          <div style="margin-bottom:var(--space-3)">
+            <button id="adminCreateUserBtn" class="btn btn-primary" type="button">Create User</button>
+          </div>
+          <div id="adminUserList" class="admin-user-list"></div>
+        </div>
+        <div id="adminTabAudit" class="iqw-tab-panel" role="tabpanel">
+          <div class="audit-filter-bar">
+            <label>From<input id="auditDateFrom" type="date"></label>
+            <label>To<input id="auditDateTo" type="date"></label>
+            <label>Action<select id="auditActionFilter" class="iqw-select"><option value="">All</option><option value="CREATE">Create</option><option value="UPDATE">Update</option><option value="DELETE">Delete</option><option value="LOGIN">Login</option><option value="STATUS_CHANGE">Status Change</option></select></label>
+            <label>Entity<select id="auditEntityFilter" class="iqw-select"><option value="">All</option><option value="case">Case</option><option value="document">Document</option><option value="user">User</option><option value="task">Task</option></select></label>
+            <button id="auditFilterBtn" class="btn btn-secondary" type="button">Filter</button>
+          </div>
+          <div class="audit-table-wrap">
+            <table class="audit-table">
+              <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead>
+              <tbody id="auditTableBody"></tbody>
+            </table>
+          </div>
+          <div id="auditPagination" class="iqw-pagination"></div>
+        </div>
+      </section>
+
       <div id="compareHistoryModal" class="compare-history-modal">
         <div class="compare-history-modal-card">
           <div class="compare-history-modal-header">
@@ -3650,6 +4050,102 @@
                 <span id="profileParserMode" class="profile-detail-value">-</span>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── IQW: Case Form Modal ── -->
+      <div id="caseFormModal" class="iqw-modal">
+        <div class="iqw-modal-card">
+          <div class="iqw-modal-header">
+            <h3 id="caseFormTitle">New Case</h3>
+            <button class="iqw-modal-close" type="button" id="caseFormClose">&times;</button>
+          </div>
+          <div class="iqw-modal-body">
+            <div class="form-group">
+              <label for="cfCaseType">Case Type</label>
+              <select id="cfCaseType"><option value="FIR">FIR</option><option value="Complaint">Complaint</option><option value="Petition">Petition</option><option value="Suo Motu">Suo Motu</option></select>
+            </div>
+            <div class="form-group">
+              <label for="cfCrimeNo">Crime Number</label>
+              <input id="cfCrimeNo" type="text" placeholder="e.g. 123/2024">
+              <div id="cfCrimeNoErr" class="iqw-form-error"></div>
+            </div>
+            <div class="form-group">
+              <label for="cfPetitionNo">Petition Number</label>
+              <input id="cfPetitionNo" type="text" placeholder="e.g. WP(C) 123/2024">
+              <div id="cfPetitionNoErr" class="iqw-form-error"></div>
+            </div>
+            <div class="form-group">
+              <label for="cfPoliceStation">Police Station</label>
+              <select id="cfPoliceStation"><option value="">Select...</option></select>
+            </div>
+            <div class="form-group">
+              <label for="cfOffenceType">Offence Type</label>
+              <input id="cfOffenceType" type="text" placeholder="Search offence type..." list="cfOffenceTypeList" autocomplete="off">
+              <datalist id="cfOffenceTypeList"></datalist>
+            </div>
+            <div class="form-group">
+              <label for="cfBriefFacts">Brief Facts</label>
+              <textarea id="cfBriefFacts" placeholder="Enter brief facts..."></textarea>
+            </div>
+          </div>
+          <div class="iqw-modal-footer">
+            <button id="caseFormCancelBtn" class="btn btn-secondary" type="button">Cancel</button>
+            <button id="caseFormSubmitBtn" class="btn btn-primary" type="button">Create Case</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── IQW: Status Transition Modal ── -->
+      <div id="statusTransitionModal" class="iqw-modal">
+        <div class="iqw-modal-card">
+          <div class="iqw-modal-header">
+            <h3>Transition Status</h3>
+            <button class="iqw-modal-close" type="button" id="stmClose">&times;</button>
+          </div>
+          <div class="iqw-modal-body">
+            <p style="font-size:0.85rem;margin-bottom:var(--space-3)">Current status: <strong id="stmCurrentStatus"></strong></p>
+            <div class="form-group">
+              <label for="stmNextStatus">Next Status</label>
+              <select id="stmNextStatus"></select>
+            </div>
+          </div>
+          <div class="iqw-modal-footer">
+            <button id="stmCancelBtn" class="btn btn-secondary" type="button">Cancel</button>
+            <button id="stmSubmitBtn" class="btn btn-primary" type="button">Transition</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── IQW: Create User Modal ── -->
+      <div id="createUserModal" class="iqw-modal">
+        <div class="iqw-modal-card">
+          <div class="iqw-modal-header">
+            <h3>Create User</h3>
+            <button class="iqw-modal-close" type="button" id="cuClose">&times;</button>
+          </div>
+          <div class="iqw-modal-body">
+            <div class="form-group">
+              <label for="cuEmployeeId">Employee ID</label>
+              <input id="cuEmployeeId" type="text" placeholder="e.g. EMP001">
+            </div>
+            <div class="form-group">
+              <label for="cuFullName">Full Name</label>
+              <input id="cuFullName" type="text" placeholder="Enter full name">
+            </div>
+            <div class="form-group">
+              <label for="cuRole">Role</label>
+              <select id="cuRole"><option value="Analyst">Analyst</option><option value="Investigator">Investigator</option><option value="Supervisor">Supervisor</option><option value="System_Admin">System Admin</option></select>
+            </div>
+            <div class="form-group">
+              <label for="cuPassword">Password</label>
+              <input id="cuPassword" type="password" placeholder="Enter password">
+            </div>
+          </div>
+          <div class="iqw-modal-footer">
+            <button id="cuCancelBtn" class="btn btn-secondary" type="button">Cancel</button>
+            <button id="cuSubmitBtn" class="btn btn-primary" type="button">Create User</button>
           </div>
         </div>
       </div>
@@ -3833,7 +4329,20 @@
       },
       history: [],
       activeHistoryId: null,
-      activeFileName: null
+      activeFileName: null,
+      _jwtAccess: null,
+      _jwtRefresh: null,
+      _userRole: null,
+      _userName: null,
+      _notifications: [],
+      _notifTimer: null,
+      _currentCaseId: null,
+      _currentCase: null,
+      _casePage: 1,
+      _auditPage: 1,
+      _selectedTemplateId: null,
+      _generatedDocId: null,
+      _docGenContent: null
     };
 
     var docFilters = {
@@ -4421,6 +4930,26 @@
     }
 
     async function restoreAuthSession() {
+      // Try JWT refresh first
+      try {
+        var jwtOk = await refreshAccessToken();
+        if (jwtOk) {
+          var meResp = await fetchV1("auth/me");
+          if (meResp.ok) {
+            var meData = await meResp.json();
+            state._loggedInUserId = meData.employee_id || meData.name || "Operator";
+            state._userRole = meData.role || null;
+            state._userName = meData.name || state._loggedInUserId;
+            updateAdminNavVisibility();
+            updateAvatarDisplay();
+            setAppAuthenticated(true, { suppressToast: true, suppressFocus: true });
+            startNotificationPolling();
+            return;
+          }
+        }
+      } catch (_jwtErr) {}
+
+      // Fall back to session auth
       try {
         const response = await fetchWithApiFallback("api/auth/session");
         const data = await readJsonSafe(response);
@@ -4430,9 +4959,7 @@
           setAppAuthenticated(true, { suppressToast: true, suppressFocus: true });
           return;
         }
-      } catch (_err) {
-        // Leave the login screen visible if the session check fails.
-      }
+      } catch (_err) {}
       state._loggedInUserId = null;
       updateAvatarDisplay();
       setAppAuthenticated(false, { suppressToast: true, suppressFocus: true, forceClear: true });
@@ -4472,6 +4999,26 @@
 
         saveRememberedUser(userValue, rememberChecked);
         state._loggedInUserId = data && data.user ? data.user : userValue;
+
+        // Also obtain JWT tokens for /api/v1/ endpoints
+        try {
+          var jwtResp = await fetch("/api/v1/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ employee_id: userValue, password: passwordValue })
+          });
+          if (jwtResp.ok) {
+            var jwtData = await jwtResp.json();
+            storeTokens(jwtData.access_token, jwtData.refresh_token);
+            if (jwtData.user) {
+              state._userRole = jwtData.user.role || null;
+              state._userName = jwtData.user.full_name || jwtData.user.name || userValue;
+            }
+            updateAdminNavVisibility();
+            startNotificationPolling();
+          }
+        } catch (_jwtErr) { /* JWT login optional; session auth is primary */ }
+
         updateAvatarDisplay();
         setAppAuthenticated(true);
         setStatus("Login successful.", "success");
@@ -4938,6 +5485,71 @@
         return lastResponse;
       }
       throw new Error("No reachable API endpoint found.");
+    }
+
+    /* ── IQW: JWT Token Management ── */
+    var IQW_REFRESH_KEY = "iqw_refresh_token";
+
+    function storeTokens(access, refresh) {
+      state._jwtAccess = access;
+      if (refresh) {
+        state._jwtRefresh = refresh;
+        try { localStorage.setItem(IQW_REFRESH_KEY, refresh); } catch (_e) {}
+      }
+    }
+
+    function clearTokens() {
+      state._jwtAccess = null;
+      state._jwtRefresh = null;
+      state._userRole = null;
+      state._userName = null;
+      try { localStorage.removeItem(IQW_REFRESH_KEY); } catch (_e) {}
+    }
+
+    async function refreshAccessToken() {
+      var rt = state._jwtRefresh || null;
+      if (!rt) {
+        try { rt = localStorage.getItem(IQW_REFRESH_KEY); } catch (_e) {}
+      }
+      if (!rt) return false;
+      try {
+        var resp = await fetch("/api/v1/auth/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: rt })
+        });
+        if (!resp.ok) { clearTokens(); return false; }
+        var data = await resp.json();
+        state._jwtAccess = data.access_token;
+        return true;
+      } catch (_e) {
+        clearTokens();
+        return false;
+      }
+    }
+
+    async function fetchV1(path, options) {
+      var opts = Object.assign({}, options || {});
+      opts.headers = Object.assign({}, opts.headers || {});
+      if (state._jwtAccess) {
+        opts.headers["Authorization"] = "Bearer " + state._jwtAccess;
+      }
+      if (!opts.headers["Content-Type"] && !(opts.body instanceof FormData)) {
+        opts.headers["Content-Type"] = "application/json";
+      }
+      if (opts.body instanceof FormData) {
+        delete opts.headers["Content-Type"];
+      }
+      var url = "/api/v1/" + path;
+      var resp = await fetch(url, opts);
+      if (resp.status === 401 && state._jwtAccess) {
+        var refreshed = await refreshAccessToken();
+        if (refreshed) {
+          opts.headers["Authorization"] = "Bearer " + state._jwtAccess;
+          resp = await fetch(url, opts);
+        }
+      }
+      return resp;
     }
 
     function formatCellValue(value) {
@@ -6658,32 +7270,73 @@
     const backToListBtn = document.getElementById("backToListBtn");
     const docListNewBtn = document.getElementById("docListNewBtn");
 
+    var iqwViews = ["cases", "case-detail", "quality-check", "doc-generation", "admin"];
+    var iqwViewEls = {};
+
     function navigateTo(view) {
       currentView = view;
+      var isLegacy = !iqwViews.includes(view);
+
       // Update sidebar nav active states
       navDocumentsBtn.classList.toggle("is-active", view === "documents-list" || view === "document-detail");
       navCompareBtn.classList.toggle("is-active", view === "compare");
-      // Toggle view visibility
+      var navCasesBtn = document.getElementById("navCasesBtn");
+      var navQualityBtn = document.getElementById("navQualityBtn");
+      var navDocGenBtn = document.getElementById("navDocGenBtn");
+      var navAdminBtn = document.getElementById("navAdminBtn");
+      if (navCasesBtn) navCasesBtn.classList.toggle("is-active", view === "cases" || view === "case-detail");
+      if (navQualityBtn) navQualityBtn.classList.toggle("is-active", view === "quality-check");
+      if (navDocGenBtn) navDocGenBtn.classList.toggle("is-active", view === "doc-generation");
+      if (navAdminBtn) navAdminBtn.classList.toggle("is-active", view === "admin");
+
+      // Hide all legacy views
       documentListView.classList.toggle("mode-hidden", view !== "documents-list");
-      parseView.classList.toggle("mode-hidden", view === "documents-list");
-      compareView.classList.toggle("is-visible", view === "compare");
-      if (view !== "compare") {
-        compareView.classList.remove("is-visible");
+      parseView.classList.add("mode-hidden");
+      compareView.classList.remove("is-visible");
+
+      // Hide all IQW views
+      var iqwSections = document.querySelectorAll(".iqw-view");
+      for (var i = 0; i < iqwSections.length; i++) {
+        iqwSections[i].classList.remove("is-active");
       }
+
       // Show/hide the parse view sections
       if (view === "documents-list") {
-        parseView.classList.add("mode-hidden");
         state.compareMode = false;
         renderDocumentList();
       } else if (view === "document-detail") {
         parseView.classList.remove("mode-hidden");
         state.compareMode = false;
       } else if (view === "compare") {
-        parseView.classList.add("mode-hidden");
         documentListView.classList.add("mode-hidden");
         compareView.classList.add("is-visible");
         state.compareMode = true;
         updateCompareActionStates();
+      } else if (view === "cases") {
+        document.getElementById("caseListView").classList.add("is-active");
+        loadCaseList();
+      } else if (view === "case-detail") {
+        document.getElementById("caseDetailView").classList.add("is-active");
+      } else if (view === "quality-check") {
+        document.getElementById("qualityCheckView").classList.add("is-active");
+      } else if (view === "doc-generation") {
+        document.getElementById("docGenView").classList.add("is-active");
+        loadTemplates();
+      } else if (view === "admin") {
+        if (state._userRole !== "System_Admin") {
+          showToast("Access denied: Admin only.", "error");
+          navigateTo("documents-list");
+          return;
+        }
+        document.getElementById("adminView").classList.add("is-active");
+        loadAdminUsers();
+        loadAuditLogs();
+      }
+
+      // Close sidebar on mobile
+      if (window.innerWidth < 768) {
+        sidebarEl.classList.remove("is-open");
+        sidebarOverlay.classList.remove("is-visible");
       }
     }
 
@@ -7291,11 +7944,12 @@
     // Logout
     async function handleLogout() {
       closeUserMenu();
+      stopNotificationPolling();
       try {
+        await fetchV1("auth/logout", { method: "POST" }).catch(function(){});
         await fetchWithApiFallback("api/auth/logout", { method: "POST" });
-      } catch (_err) {
-        // Clear the local session state even if the logout request fails.
-      }
+      } catch (_err) {}
+      clearTokens();
       state._loggedInUserId = null;
       updateAvatarDisplay();
       setStatus("", "info");
@@ -7510,6 +8164,1049 @@
         URL.revokeObjectURL(state.previewUrl);
       }
     });
+
+    /* ══════════════════════════════════════════════════════════
+       IQW Phase 1 — All New View Logic
+       ══════════════════════════════════════════════════════════ */
+
+    /* ── Admin Nav Visibility ── */
+    function updateAdminNavVisibility() {
+      var btn = document.getElementById("navAdminBtn");
+      if (btn) {
+        if (state._userRole === "System_Admin") {
+          btn.classList.add("is-visible");
+        } else {
+          btn.classList.remove("is-visible");
+        }
+      }
+    }
+
+    /* ── Notification Bell ── */
+    var notifBellBtn = document.getElementById("notifBellBtn");
+    var notifDropdown = document.getElementById("notifDropdown");
+    var notifBadge = document.getElementById("notifBadge");
+    var notifList = document.getElementById("notifList");
+    var notifMarkAllBtn = document.getElementById("notifMarkAllBtn");
+
+    function startNotificationPolling() {
+      stopNotificationPolling();
+      loadNotifications();
+      state._notifTimer = setInterval(loadNotifications, 60000);
+    }
+
+    function stopNotificationPolling() {
+      if (state._notifTimer) {
+        clearInterval(state._notifTimer);
+        state._notifTimer = null;
+      }
+    }
+
+    async function loadNotifications() {
+      if (!state._jwtAccess) return;
+      try {
+        var resp = await fetchV1("notifications/");
+        if (!resp.ok) return;
+        var data = await resp.json();
+        state._notifications = Array.isArray(data) ? data : [];
+        renderNotifications();
+      } catch (_e) {}
+    }
+
+    function renderNotifications() {
+      var items = state._notifications;
+      var unreadCount = items.filter(function(n) { return !n.read; }).length;
+      if (unreadCount > 0) {
+        notifBadge.textContent = unreadCount > 99 ? "99+" : String(unreadCount);
+        notifBadge.classList.remove("mode-hidden");
+      } else {
+        notifBadge.classList.add("mode-hidden");
+      }
+      if (!items.length) {
+        notifList.innerHTML = '<div class="notif-empty">No notifications</div>';
+        return;
+      }
+      var html = "";
+      items.forEach(function(n) {
+        var cls = n.read ? "notif-item" : "notif-item unread";
+        var time = n.created_at ? new Date(n.created_at).toLocaleString() : "";
+        html += '<div class="' + cls + '" data-notif-id="' + (n.id || "") + '" data-entity-type="' + (n.entity_type || "") + '" data-entity-id="' + (n.entity_id || "") + '">';
+        html += '<div class="notif-item-dot"></div>';
+        html += '<div class="notif-item-body">';
+        html += '<div class="notif-item-msg">' + escapeHtml(n.message || "") + '</div>';
+        html += '<div class="notif-item-time">' + escapeHtml(time) + '</div>';
+        html += '</div></div>';
+      });
+      notifList.innerHTML = html;
+    }
+
+    function escapeHtml(s) {
+      var div = document.createElement("div");
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    notifBellBtn.addEventListener("click", function(e) {
+      e.stopPropagation();
+      var isOpen = notifDropdown.classList.toggle("is-open");
+      notifBellBtn.setAttribute("aria-expanded", String(isOpen));
+    });
+
+    notifList.addEventListener("click", function(e) {
+      var item = e.target.closest(".notif-item");
+      if (!item) return;
+      var nid = item.getAttribute("data-notif-id");
+      var entityType = item.getAttribute("data-entity-type");
+      var entityId = item.getAttribute("data-entity-id");
+      if (nid) markNotificationRead(nid);
+      if (entityType === "case" && entityId) {
+        notifDropdown.classList.remove("is-open");
+        openCaseDetail(entityId);
+      }
+    });
+
+    notifMarkAllBtn.addEventListener("click", function() {
+      state._notifications.forEach(function(n) {
+        if (!n.read && n.id) markNotificationRead(n.id);
+      });
+    });
+
+    async function markNotificationRead(nid) {
+      try {
+        await fetchV1("notifications/" + nid + "/read", { method: "PATCH" });
+        var n = state._notifications.find(function(x) { return x.id === nid; });
+        if (n) n.read = true;
+        renderNotifications();
+      } catch (_e) {}
+    }
+
+    document.addEventListener("mousedown", function(e) {
+      if (notifDropdown.classList.contains("is-open") && !document.getElementById("notifBellWrap").contains(e.target)) {
+        notifDropdown.classList.remove("is-open");
+        notifBellBtn.setAttribute("aria-expanded", "false");
+      }
+    });
+
+    /* ── Sidebar Nav Wiring ── */
+    document.getElementById("navCasesBtn").addEventListener("click", function() { navigateTo("cases"); });
+    document.getElementById("navQualityBtn").addEventListener("click", function() { navigateTo("quality-check"); });
+    document.getElementById("navDocGenBtn").addEventListener("click", function() { navigateTo("doc-generation"); });
+    document.getElementById("navAdminBtn").addEventListener("click", function() { navigateTo("admin"); });
+
+    /* ── Tab Switching ── */
+    function initTabBar(container) {
+      var tabs = container.querySelectorAll(".iqw-tab");
+      tabs.forEach(function(tab) {
+        tab.addEventListener("click", function() {
+          var targetId = tab.getAttribute("data-tab");
+          tabs.forEach(function(t) {
+            t.classList.remove("is-active");
+            t.setAttribute("aria-selected", "false");
+          });
+          tab.classList.add("is-active");
+          tab.setAttribute("aria-selected", "true");
+          var panels = container.parentElement.querySelectorAll(".iqw-tab-panel");
+          panels.forEach(function(p) { p.classList.remove("is-active"); });
+          var panel = document.getElementById(targetId);
+          if (panel) panel.classList.add("is-active");
+
+          // Load tab data for case detail
+          if (targetId === "caseTabDocuments" && state._currentCaseId) loadCaseDocuments();
+          if (targetId === "caseTabTimeline" && state._currentCaseId) loadCaseTimeline();
+          if (targetId === "caseTabTasks" && state._currentCaseId) loadCaseTasks();
+        });
+      });
+    }
+
+    // Init all tab bars
+    document.querySelectorAll(".iqw-tabs").forEach(function(tb) { initTabBar(tb); });
+
+    /* ══════════════════════════════════════════════════════════
+       Phase 1: Case Workbench
+       ══════════════════════════════════════════════════════════ */
+
+    var CASE_STATUS_TRANSITIONS = {
+      "Draft": ["Open"],
+      "Open": ["Under Investigation", "Closed"],
+      "Under Investigation": ["Under Review", "Closed"],
+      "Under Review": ["Open", "Closed"],
+      "Closed": ["Archived", "Open"],
+      "Archived": []
+    };
+
+    async function loadCaseList(page) {
+      state._casePage = page || state._casePage || 1;
+      var params = new URLSearchParams();
+      params.set("page", String(state._casePage));
+      params.set("page_size", "20");
+      var statusF = document.getElementById("caseStatusFilter").value;
+      var dateFrom = document.getElementById("caseDateFrom").value;
+      var dateTo = document.getElementById("caseDateTo").value;
+      if (statusF) params.set("status", statusF);
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (dateTo) params.set("date_to", dateTo);
+      try {
+        var resp = await fetchV1("cases/?" + params.toString());
+        if (!resp.ok) { document.getElementById("caseCardList").innerHTML = '<div class="notif-empty">Failed to load cases.</div>'; return; }
+        var data = await resp.json();
+        renderCaseList(data);
+      } catch (e) {
+        document.getElementById("caseCardList").innerHTML = '<div class="notif-empty">Error loading cases.</div>';
+      }
+    }
+
+    function renderCaseList(data) {
+      var cases = data.items || data.cases || [];
+      var total = data.total || cases.length;
+      var page = data.page || state._casePage;
+      var pageSize = data.page_size || 20;
+      var container = document.getElementById("caseCardList");
+      var searchTerm = (document.getElementById("caseSearchInput").value || "").toLowerCase();
+
+      if (searchTerm) {
+        cases = cases.filter(function(c) {
+          var text = (c.crime_no || "") + " " + (c.petition_no || "") + " " + (c.brief_facts || "") + " " + (c.case_type || "");
+          return text.toLowerCase().indexOf(searchTerm) !== -1;
+        });
+      }
+
+      if (!cases.length) {
+        container.innerHTML = '<div class="notif-empty">No cases found.</div>';
+        document.getElementById("casePagination").innerHTML = "";
+        return;
+      }
+
+      var html = "";
+      cases.forEach(function(c) {
+        var statusCls = getStatusBadgeClass(c.status);
+        html += '<div class="case-card" data-case-id="' + (c.id || "") + '">';
+        html += '<div class="case-card-top">';
+        html += '<span class="case-card-title">' + escapeHtml(c.case_type || "Case") + (c.crime_no ? " — " + escapeHtml(c.crime_no) : "") + '</span>';
+        html += '<span class="status-badge ' + statusCls + '">' + escapeHtml(c.status || "Draft") + '</span>';
+        html += '</div>';
+        html += '<div class="case-card-meta">';
+        if (c.petition_no) html += '<span>Petition: ' + escapeHtml(c.petition_no) + '</span>';
+        if (c.created_at) html += '<span>' + new Date(c.created_at).toLocaleDateString() + '</span>';
+        html += '</div>';
+        if (c.brief_facts) html += '<div class="case-card-brief">' + escapeHtml(c.brief_facts) + '</div>';
+        html += '</div>';
+      });
+      container.innerHTML = html;
+
+      // Pagination
+      var totalPages = Math.ceil(total / pageSize);
+      renderPagination(document.getElementById("casePagination"), page, totalPages, function(p) { loadCaseList(p); });
+
+      // Click handler
+      container.querySelectorAll(".case-card").forEach(function(card) {
+        card.addEventListener("click", function() {
+          openCaseDetail(card.getAttribute("data-case-id"));
+        });
+      });
+    }
+
+    function getStatusBadgeClass(status) {
+      var s = (status || "").toLowerCase().replace(/ /g, "");
+      if (s === "draft") return "status-badge--draft";
+      if (s === "open") return "status-badge--open";
+      if (s === "underinvestigation") return "status-badge--investigation";
+      if (s === "underreview") return "status-badge--review";
+      if (s === "closed") return "status-badge--closed";
+      if (s === "archived") return "status-badge--archived";
+      return "status-badge--draft";
+    }
+
+    function renderPagination(container, page, totalPages, onPageChange) {
+      if (totalPages <= 1) { container.innerHTML = ""; return; }
+      var html = '<button ' + (page <= 1 ? 'disabled' : '') + ' data-page="' + (page - 1) + '">&laquo; Prev</button>';
+      for (var i = 1; i <= totalPages && i <= 7; i++) {
+        html += '<button class="' + (i === page ? 'is-active' : '') + '" data-page="' + i + '">' + i + '</button>';
+      }
+      html += '<button ' + (page >= totalPages ? 'disabled' : '') + ' data-page="' + (page + 1) + '">Next &raquo;</button>';
+      container.innerHTML = html;
+      container.querySelectorAll("button").forEach(function(btn) {
+        btn.addEventListener("click", function() {
+          var p = parseInt(btn.getAttribute("data-page"), 10);
+          if (p >= 1 && p <= totalPages) onPageChange(p);
+        });
+      });
+    }
+
+    // Case list events
+    document.getElementById("caseSearchInput").addEventListener("input", function() { loadCaseList(1); });
+    document.getElementById("caseStatusFilter").addEventListener("change", function() { loadCaseList(1); });
+    document.getElementById("caseDateFrom").addEventListener("change", function() { loadCaseList(1); });
+    document.getElementById("caseDateTo").addEventListener("change", function() { loadCaseList(1); });
+
+    /* ── Case Detail ── */
+    async function openCaseDetail(caseId) {
+      state._currentCaseId = caseId;
+      try {
+        var resp = await fetchV1("cases/" + caseId);
+        if (!resp.ok) { showToast("Case not found.", "error"); return; }
+        var c = await resp.json();
+        state._currentCase = c;
+        renderCaseDetail(c);
+        navigateTo("case-detail");
+      } catch (e) {
+        showToast("Error loading case.", "error");
+      }
+    }
+
+    function renderCaseDetail(c) {
+      document.getElementById("caseDetailTitle").textContent = (c.case_type || "Case") + (c.crime_no ? " — " + c.crime_no : "");
+      var badge = document.getElementById("caseDetailBadge");
+      badge.textContent = c.status || "Draft";
+      badge.className = "status-badge " + getStatusBadgeClass(c.status);
+
+      var grid = document.getElementById("caseInfoGrid");
+      var fields = [
+        { label: "Case Type", value: c.case_type },
+        { label: "Crime No", value: c.crime_no },
+        { label: "Petition No", value: c.petition_no },
+        { label: "Police Station", value: c.police_station_name || c.police_station_id },
+        { label: "Primary Offence", value: c.primary_offence_type_name || c.primary_offence_type_id },
+        { label: "Status", value: c.status },
+        { label: "Created", value: c.created_at ? new Date(c.created_at).toLocaleString() : "-" },
+        { label: "Updated", value: c.updated_at ? new Date(c.updated_at).toLocaleString() : "-" }
+      ];
+      grid.innerHTML = fields.map(function(f) {
+        return '<div class="case-info-item"><label>' + escapeHtml(f.label) + '</label><span>' + escapeHtml(f.value || "-") + '</span></div>';
+      }).join("");
+
+      var briefEl = document.getElementById("caseBriefFacts");
+      briefEl.innerHTML = c.brief_facts ? '<label style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--color-text-muted)">Brief Facts</label><p style="font-size:0.88rem;margin-top:4px;line-height:1.6">' + escapeHtml(c.brief_facts) + '</p>' : '';
+
+      // Reset to Details tab
+      var detailTabs = document.querySelectorAll("#caseDetailView .iqw-tab");
+      detailTabs.forEach(function(t, i) {
+        t.classList.toggle("is-active", i === 0);
+        t.setAttribute("aria-selected", i === 0 ? "true" : "false");
+      });
+      document.querySelectorAll("#caseDetailView .iqw-tab-panel").forEach(function(p, i) {
+        p.classList.toggle("is-active", i === 0);
+      });
+    }
+
+    document.getElementById("caseDetailBack").addEventListener("click", function() { navigateTo("cases"); });
+
+    /* ── Case Documents Tab ── */
+    async function loadCaseDocuments() {
+      var container = document.getElementById("caseDocList");
+      try {
+        var resp = await fetchV1("cases/" + state._currentCaseId + "/documents");
+        if (!resp.ok) { container.innerHTML = '<div class="notif-empty">Failed to load documents.</div>'; return; }
+        var docs = await resp.json();
+        if (!docs.length) { container.innerHTML = '<div class="notif-empty">No documents uploaded.</div>'; return; }
+        container.innerHTML = docs.map(function(d) {
+          return '<div class="case-doc-item">' +
+            '<span class="case-doc-item-name">' + escapeHtml(d.filename || d.file_name || "Document") + '</span>' +
+            '<span class="case-doc-item-type">' + escapeHtml(d.document_type || "-") + '</span>' +
+            '<span class="case-doc-item-hash" title="' + escapeHtml(d.sha256_hash || "") + '">' + escapeHtml((d.sha256_hash || "").substring(0, 16)) + '…</span>' +
+            '</div>';
+        }).join("");
+      } catch (_e) {
+        container.innerHTML = '<div class="notif-empty">Error loading documents.</div>';
+      }
+    }
+
+    document.getElementById("caseDocUploadBtn").addEventListener("click", async function() {
+      var fileInput = document.getElementById("caseDocFileInput");
+      var file = fileInput.files && fileInput.files[0];
+      if (!file) { showToast("Select a file first.", "warning"); return; }
+      var docType = document.getElementById("caseDocTypeSelect").value;
+      var formData = new FormData();
+      formData.append("file", file);
+      try {
+        var resp = await fetchV1("cases/" + state._currentCaseId + "/documents?document_type=" + encodeURIComponent(docType), {
+          method: "POST",
+          body: formData
+        });
+        if (resp.ok) {
+          var doc = await resp.json();
+          showToast("Document uploaded. SHA-256: " + (doc.sha256_hash || "").substring(0, 16) + "…", "success");
+          fileInput.value = "";
+          loadCaseDocuments();
+        } else {
+          showToast("Upload failed.", "error");
+        }
+      } catch (_e) {
+        showToast("Upload error.", "error");
+      }
+    });
+
+    /* ── Case Timeline Tab ── */
+    async function loadCaseTimeline() {
+      var container = document.getElementById("caseTimeline");
+      try {
+        var resp = await fetchV1("cases/" + state._currentCaseId + "/timeline?sort=desc");
+        if (!resp.ok) { container.innerHTML = '<div class="notif-empty">Failed to load timeline.</div>'; return; }
+        var events = await resp.json();
+        if (!events.length) { container.innerHTML = '<div class="notif-empty">No timeline events.</div>'; return; }
+        container.innerHTML = events.map(function(ev) {
+          return '<div class="timeline-entry">' +
+            '<div class="timeline-entry-time">' + (ev.timestamp ? new Date(ev.timestamp).toLocaleString() : "") + '</div>' +
+            '<div class="timeline-entry-text">' + escapeHtml(ev.description || ev.action || "") + '</div>' +
+            '<div class="timeline-entry-actor">' + escapeHtml(ev.actor || ev.user_id || "") + '</div>' +
+            '</div>';
+        }).join("");
+      } catch (_e) {
+        container.innerHTML = '<div class="notif-empty">Error loading timeline.</div>';
+      }
+    }
+
+    /* ── Case Tasks Tab ── */
+    async function loadCaseTasks() {
+      var container = document.getElementById("caseTaskList");
+      try {
+        var resp = await fetchV1("cases/" + state._currentCaseId + "/tasks");
+        if (!resp.ok) { container.innerHTML = '<div class="notif-empty">Failed to load tasks.</div>'; return; }
+        var tasks = await resp.json();
+        if (!tasks.length) { container.innerHTML = '<div class="notif-empty">No tasks.</div>'; return; }
+        container.innerHTML = tasks.map(function(t) {
+          var prCls = "task-item-priority--" + (t.priority || "medium");
+          var stCls = t.status === "done" ? "task-item-status task-item-status--done" : "task-item-status";
+          return '<div class="task-item" data-task-id="' + (t.id || "") + '">' +
+            '<span class="task-item-name">' + escapeHtml(t.task_name || t.name || "") + '</span>' +
+            '<span class="task-item-priority ' + prCls + '">' + escapeHtml(t.priority || "medium") + '</span>' +
+            (t.due_date ? '<span style="font-size:0.78rem;color:var(--color-text-muted)">' + escapeHtml(t.due_date) + '</span>' : '') +
+            '<span class="' + stCls + '">' + escapeHtml(t.status || "pending") + '</span>' +
+            (t.status !== "done" ? '<button class="btn btn-secondary" style="padding:2px 8px;font-size:0.72rem" data-complete-task="' + (t.id || "") + '">Done</button>' : '') +
+            '</div>';
+        }).join("");
+
+        // Wire complete buttons
+        container.querySelectorAll("[data-complete-task]").forEach(function(btn) {
+          btn.addEventListener("click", function(e) {
+            e.stopPropagation();
+            updateCaseTask(btn.getAttribute("data-complete-task"), "done");
+          });
+        });
+      } catch (_e) {
+        container.innerHTML = '<div class="notif-empty">Error loading tasks.</div>';
+      }
+    }
+
+    document.getElementById("caseTaskAddBtn").addEventListener("click", async function() {
+      var name = document.getElementById("caseTaskName").value.trim();
+      if (!name) { showToast("Task name required.", "warning"); return; }
+      var due = document.getElementById("caseTaskDue").value || null;
+      var priority = document.getElementById("caseTaskPriority").value || "medium";
+      try {
+        var resp = await fetchV1("cases/" + state._currentCaseId + "/tasks", {
+          method: "POST",
+          body: JSON.stringify({ task_name: name, due_date: due, priority: priority })
+        });
+        if (resp.ok) {
+          document.getElementById("caseTaskName").value = "";
+          document.getElementById("caseTaskDue").value = "";
+          showToast("Task created.", "success");
+          loadCaseTasks();
+        } else {
+          showToast("Failed to create task.", "error");
+        }
+      } catch (_e) {
+        showToast("Error creating task.", "error");
+      }
+    });
+
+    async function updateCaseTask(taskId, newStatus) {
+      try {
+        var resp = await fetchV1("cases/" + state._currentCaseId + "/tasks/" + taskId, {
+          method: "PUT",
+          body: JSON.stringify({ status: newStatus })
+        });
+        if (resp.ok) {
+          showToast("Task updated.", "success");
+          loadCaseTasks();
+        }
+      } catch (_e) {}
+    }
+
+    /* ── Case Form Modal ── */
+    var caseFormModal = document.getElementById("caseFormModal");
+    var caseFormEditId = null;
+
+    document.getElementById("caseNewBtn").addEventListener("click", function() { openCaseForm(); });
+    document.getElementById("caseEditBtn").addEventListener("click", function() { openCaseForm(state._currentCase); });
+    document.getElementById("caseFormClose").addEventListener("click", closeCaseForm);
+    document.getElementById("caseFormCancelBtn").addEventListener("click", closeCaseForm);
+    caseFormModal.addEventListener("click", function(e) { if (e.target === caseFormModal) closeCaseForm(); });
+
+    async function openCaseForm(existingCase) {
+      caseFormEditId = existingCase ? existingCase.id : null;
+      document.getElementById("caseFormTitle").textContent = caseFormEditId ? "Edit Case" : "New Case";
+      document.getElementById("caseFormSubmitBtn").textContent = caseFormEditId ? "Save Changes" : "Create Case";
+
+      // Populate police stations
+      try {
+        var psResp = await fetchV1("police-stations/");
+        if (psResp.ok) {
+          var stations = await psResp.json();
+          var sel = document.getElementById("cfPoliceStation");
+          sel.innerHTML = '<option value="">Select...</option>' + stations.map(function(s) {
+            return '<option value="' + escapeHtml(s.id || "") + '">' + escapeHtml(s.name || s.id) + '</option>';
+          }).join("");
+        }
+      } catch (_e) {}
+
+      // Populate offence types datalist
+      try {
+        var otResp = await fetchV1("offence-types/");
+        if (otResp.ok) {
+          var types = await otResp.json();
+          document.getElementById("cfOffenceTypeList").innerHTML = types.map(function(t) {
+            return '<option value="' + escapeHtml(t.name || t.id) + '">';
+          }).join("");
+        }
+      } catch (_e) {}
+
+      // Fill form if editing
+      if (existingCase) {
+        document.getElementById("cfCaseType").value = existingCase.case_type || "FIR";
+        document.getElementById("cfCrimeNo").value = existingCase.crime_no || "";
+        document.getElementById("cfPetitionNo").value = existingCase.petition_no || "";
+        document.getElementById("cfPoliceStation").value = existingCase.police_station_id || "";
+        document.getElementById("cfOffenceType").value = existingCase.primary_offence_type_name || existingCase.primary_offence_type_id || "";
+        document.getElementById("cfBriefFacts").value = existingCase.brief_facts || "";
+      } else {
+        document.getElementById("cfCaseType").value = "FIR";
+        document.getElementById("cfCrimeNo").value = "";
+        document.getElementById("cfPetitionNo").value = "";
+        document.getElementById("cfPoliceStation").value = "";
+        document.getElementById("cfOffenceType").value = "";
+        document.getElementById("cfBriefFacts").value = "";
+      }
+      document.getElementById("cfCrimeNoErr").textContent = "";
+      document.getElementById("cfPetitionNoErr").textContent = "";
+      caseFormModal.classList.add("is-visible");
+    }
+
+    function closeCaseForm() { caseFormModal.classList.remove("is-visible"); }
+
+    document.getElementById("caseFormSubmitBtn").addEventListener("click", async function() {
+      var crimeNo = document.getElementById("cfCrimeNo").value.trim();
+      var petitionNo = document.getElementById("cfPetitionNo").value.trim();
+      document.getElementById("cfCrimeNoErr").textContent = "";
+      document.getElementById("cfPetitionNoErr").textContent = "";
+
+      // Validate formats
+      if (crimeNo && !/^\d+\/\d{4}$/.test(crimeNo)) {
+        document.getElementById("cfCrimeNoErr").textContent = "Format: 123/2024";
+        return;
+      }
+      if (petitionNo && !/^[\w()]+\s*\d+\/\d{4}$/.test(petitionNo) && petitionNo.length > 0) {
+        document.getElementById("cfPetitionNoErr").textContent = "Format: WP(C) 123/2024";
+        return;
+      }
+
+      var body = {
+        case_type: document.getElementById("cfCaseType").value,
+        crime_no: crimeNo || null,
+        petition_no: petitionNo || null,
+        police_station_id: document.getElementById("cfPoliceStation").value || null,
+        primary_offence_type_id: document.getElementById("cfOffenceType").value || null,
+        brief_facts: document.getElementById("cfBriefFacts").value.trim() || null
+      };
+
+      try {
+        var url = caseFormEditId ? "cases/" + caseFormEditId : "cases/";
+        var method = caseFormEditId ? "PUT" : "POST";
+        var resp = await fetchV1(url, { method: method, body: JSON.stringify(body) });
+        if (resp.ok) {
+          var c = await resp.json();
+          showToast(caseFormEditId ? "Case updated." : "Case created.", "success");
+          closeCaseForm();
+          if (caseFormEditId) {
+            openCaseDetail(caseFormEditId);
+          } else {
+            navigateTo("cases");
+          }
+        } else {
+          var err = await resp.json().catch(function() { return {}; });
+          showToast((err.error && err.error.message) || "Operation failed.", "error");
+        }
+      } catch (_e) {
+        showToast("Error submitting case.", "error");
+      }
+    });
+
+    /* ── Status Transition Modal ── */
+    var stmModal = document.getElementById("statusTransitionModal");
+    document.getElementById("caseTransitionBtn").addEventListener("click", function() {
+      if (!state._currentCase) return;
+      var current = state._currentCase.status || "Draft";
+      document.getElementById("stmCurrentStatus").textContent = current;
+      var nextOptions = CASE_STATUS_TRANSITIONS[current] || [];
+      var sel = document.getElementById("stmNextStatus");
+      sel.innerHTML = nextOptions.map(function(s) { return '<option value="' + s + '">' + s + '</option>'; }).join("");
+      if (!nextOptions.length) {
+        sel.innerHTML = '<option value="">No transitions available</option>';
+      }
+      stmModal.classList.add("is-visible");
+    });
+    document.getElementById("stmClose").addEventListener("click", function() { stmModal.classList.remove("is-visible"); });
+    document.getElementById("stmCancelBtn").addEventListener("click", function() { stmModal.classList.remove("is-visible"); });
+    stmModal.addEventListener("click", function(e) { if (e.target === stmModal) stmModal.classList.remove("is-visible"); });
+    document.getElementById("stmSubmitBtn").addEventListener("click", async function() {
+      var nextStatus = document.getElementById("stmNextStatus").value;
+      if (!nextStatus) return;
+      try {
+        var resp = await fetchV1("cases/" + state._currentCaseId + "/status", {
+          method: "PATCH",
+          body: JSON.stringify({ status: nextStatus })
+        });
+        if (resp.ok) {
+          var c = await resp.json();
+          state._currentCase = c;
+          renderCaseDetail(c);
+          showToast("Status changed to " + nextStatus + ".", "success");
+          stmModal.classList.remove("is-visible");
+        } else {
+          var err = await resp.json().catch(function() { return {}; });
+          showToast((err.error && err.error.message) || "Transition failed.", "error");
+        }
+      } catch (_e) {
+        showToast("Error transitioning status.", "error");
+      }
+    });
+
+    /* ══════════════════════════════════════════════════════════
+       Phase 2: Quality Check
+       ══════════════════════════════════════════════════════════ */
+
+    document.getElementById("qcRunBtn").addEventListener("click", runQualityCheck);
+
+    async function runQualityCheck() {
+      var text = document.getElementById("qcText").value.trim();
+      if (!text) { showToast("Paste document text first.", "warning"); return; }
+      var docType = document.getElementById("qcDocType").value;
+      var offenceType = document.getElementById("qcOffenceType").value.trim() || null;
+      var btn = document.getElementById("qcRunBtn");
+      btn.disabled = true;
+      btn.querySelector(".spinner").style.display = "inline-block";
+
+      try {
+        var resp = await fetchV1("analysis/quality-check", {
+          method: "POST",
+          body: JSON.stringify({
+            document_text: text,
+            document_type: docType,
+            offence_type: offenceType
+          })
+        });
+        btn.disabled = false;
+        btn.querySelector(".spinner").style.display = "none";
+        if (!resp.ok) { showToast("Quality check failed.", "error"); return; }
+        var data = await resp.json();
+        renderQualityResults(data);
+      } catch (_e) {
+        btn.disabled = false;
+        btn.querySelector(".spinner").style.display = "none";
+        showToast("Error running quality check.", "error");
+      }
+    }
+
+    function renderQualityResults(data) {
+      var container = document.getElementById("qcResults");
+      container.style.display = "block";
+
+      var items = data.checklist || data.findings || data.items || [];
+      var score = data.completeness_score != null ? data.completeness_score : null;
+      var trialRisks = data.trial_risks || data.risk_indicators || [];
+
+      // Count categories
+      var present = 0, weak = 0, missing = 0;
+      items.forEach(function(item) {
+        var st = (item.status || "").toLowerCase();
+        if (st === "present" || st === "pass") present++;
+        else if (st === "weak" || st === "partial") weak++;
+        else missing++;
+      });
+
+      // Calculate score if not provided
+      if (score == null && items.length) {
+        score = Math.round((present / items.length) * 100);
+      }
+
+      var html = "";
+
+      // Score ring
+      if (score != null) {
+        var circumference = 2 * Math.PI * 42;
+        var offset = circumference - (score / 100) * circumference;
+        html += '<svg class="qc-score-ring" viewBox="0 0 100 100">';
+        html += '<circle class="ring-bg" cx="50" cy="50" r="42"/>';
+        html += '<circle class="ring-fg" cx="50" cy="50" r="42" stroke-dasharray="' + circumference.toFixed(1) + '" stroke-dashoffset="' + offset.toFixed(1) + '" transform="rotate(-90 50 50)"/>';
+        html += '<text class="qc-score-label" x="50" y="55">' + score + '%</text>';
+        html += '</svg>';
+      }
+
+      // Stats
+      html += '<div class="qc-stats">';
+      html += '<div class="qc-stat"><div class="qc-stat-value" style="color:var(--color-success)">' + present + '</div><div class="qc-stat-label">Present</div></div>';
+      html += '<div class="qc-stat"><div class="qc-stat-value" style="color:var(--color-warning)">' + weak + '</div><div class="qc-stat-label">Weak</div></div>';
+      html += '<div class="qc-stat"><div class="qc-stat-value" style="color:var(--color-error)">' + missing + '</div><div class="qc-stat-label">Missing</div></div>';
+      html += '</div>';
+
+      // Findings
+      if (items.length) {
+        html += '<h3 style="font-size:0.92rem;font-weight:600;margin-bottom:var(--space-3)">Findings</h3>';
+        items.forEach(function(item) {
+          var severity = (item.severity || "low").toLowerCase();
+          var fCls = "qc-finding qc-finding--" + severity;
+          html += '<div class="' + fCls + '">';
+          html += '<div class="qc-finding-header">';
+          html += '<span class="qc-finding-item">' + escapeHtml(item.item || item.name || item.field || "") + '</span>';
+          if (item.category) html += '<span class="severity-badge severity-badge--' + severity + '">' + escapeHtml(item.category) + '</span>';
+          html += '<span class="severity-badge severity-badge--' + severity + '">' + escapeHtml(item.severity || "Low") + '</span>';
+          var statusText = item.status || "";
+          html += '<span class="status-badge status-badge--' + (statusText.toLowerCase() === "present" || statusText.toLowerCase() === "pass" ? "open" : statusText.toLowerCase() === "weak" || statusText.toLowerCase() === "partial" ? "investigation" : "draft") + '">' + escapeHtml(statusText) + '</span>';
+          html += '</div>';
+          if (item.excerpt) html += '<div class="qc-finding-detail" style="font-style:italic;margin-top:2px">"' + escapeHtml(item.excerpt) + '"</div>';
+          if (item.suggestion) html += '<div class="qc-finding-detail" style="margin-top:2px">' + escapeHtml(item.suggestion) + '</div>';
+          html += '</div>';
+        });
+      }
+
+      // Trial risks
+      if (trialRisks.length) {
+        html += '<div class="qc-trial-risks"><h3 style="font-size:0.92rem;font-weight:600;margin-bottom:var(--space-3)">Trial Risk Indicators</h3>';
+        trialRisks.forEach(function(r) {
+          var sev = (r.severity || "low").toLowerCase();
+          html += '<div class="qc-trial-risk qc-trial-risk--' + sev + '">';
+          html += '<span class="severity-badge severity-badge--' + sev + '">' + escapeHtml(r.severity || "Low") + '</span>';
+          html += '<span>' + escapeHtml(r.description || r.message || "") + '</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+      }
+
+      container.innerHTML = html;
+    }
+
+    /* Cross-feature: Run QC from case documents tab */
+    document.getElementById("caseDocQcBtn").addEventListener("click", function() {
+      navigateTo("quality-check");
+    });
+
+    /* ══════════════════════════════════════════════════════════
+       Phase 3: Document Generation
+       ════════════════════════════════════════════════════��═════ */
+
+    async function loadTemplates() {
+      var catFilter = document.getElementById("docGenCatFilter").value || "";
+      var params = catFilter ? "?category=" + encodeURIComponent(catFilter) : "";
+      try {
+        var resp = await fetchV1("templates/" + params);
+        if (!resp.ok) return;
+        var templates = await resp.json();
+
+        // Populate category filter
+        var cats = {};
+        templates.forEach(function(t) { if (t.category) cats[t.category] = true; });
+        var catSel = document.getElementById("docGenCatFilter");
+        var currentCat = catSel.value;
+        catSel.innerHTML = '<option value="">All Categories</option>' + Object.keys(cats).map(function(c) {
+          return '<option value="' + escapeHtml(c) + '"' + (c === currentCat ? ' selected' : '') + '>' + escapeHtml(c) + '</option>';
+        }).join("");
+
+        var grid = document.getElementById("templateGrid");
+        if (!templates.length) {
+          grid.innerHTML = '<div class="notif-empty">No templates available.</div>';
+          return;
+        }
+        grid.innerHTML = templates.map(function(t) {
+          var selClass = t.id === state._selectedTemplateId ? " is-selected" : "";
+          return '<div class="template-card' + selClass + '" data-template-id="' + escapeHtml(t.id || "") + '">' +
+            '<div class="template-card-title">' + escapeHtml(t.name || t.title || "Template") + '</div>' +
+            (t.category ? '<span class="template-card-cat">' + escapeHtml(t.category) + '</span>' : '') +
+            (t.description ? '<div style="font-size:0.78rem;color:var(--color-text-muted);margin-top:var(--space-2)">' + escapeHtml(t.description) + '</div>' : '') +
+            '</div>';
+        }).join("");
+
+        grid.querySelectorAll(".template-card").forEach(function(card) {
+          card.addEventListener("click", function() {
+            selectTemplate(card.getAttribute("data-template-id"));
+            grid.querySelectorAll(".template-card").forEach(function(c) { c.classList.remove("is-selected"); });
+            card.classList.add("is-selected");
+          });
+        });
+      } catch (_e) {}
+    }
+
+    document.getElementById("docGenCatFilter").addEventListener("change", loadTemplates);
+
+    async function selectTemplate(templateId) {
+      state._selectedTemplateId = templateId;
+      state._generatedDocId = null;
+      state._docGenContent = null;
+      var workspace = document.getElementById("docGenWorkspace");
+      workspace.style.display = "block";
+      document.getElementById("docGenPreviewWrap").style.display = "none";
+      document.getElementById("docGenEditBtn").style.display = "none";
+      document.getElementById("docGenSaveBtn").style.display = "none";
+
+      try {
+        var resp = await fetchV1("templates/" + templateId);
+        if (!resp.ok) return;
+        var tmpl = await resp.json();
+        document.getElementById("docGenTemplateName").textContent = tmpl.name || tmpl.title || "Template";
+
+        // Build form fields from placeholders
+        var placeholders = tmpl.placeholders || tmpl.fields || [];
+        var fieldsEl = document.getElementById("docGenFields");
+        if (!placeholders.length) {
+          fieldsEl.innerHTML = '<div class="notif-empty">This template has no placeholders.</div>';
+          return;
+        }
+        fieldsEl.innerHTML = placeholders.map(function(p) {
+          var name = typeof p === "string" ? p : (p.name || p.key || "");
+          var label = typeof p === "string" ? p : (p.label || p.name || p.key || "");
+          return '<div class="docgen-field-group">' +
+            '<label for="docgen_field_' + escapeHtml(name) + '">' + escapeHtml(label) + '</label>' +
+            '<input id="docgen_field_' + escapeHtml(name) + '" data-placeholder="' + escapeHtml(name) + '" type="text" placeholder="Enter ' + escapeHtml(label) + '...">' +
+            '</div>';
+        }).join("");
+      } catch (_e) {}
+    }
+
+    document.getElementById("docGenGenerateBtn").addEventListener("click", async function() {
+      if (!state._selectedTemplateId) { showToast("Select a template first.", "warning"); return; }
+      var caseData = {};
+      document.querySelectorAll("#docGenFields [data-placeholder]").forEach(function(input) {
+        caseData[input.getAttribute("data-placeholder")] = input.value;
+      });
+
+      // If we have a current case, use the case generation endpoint
+      var url, body;
+      if (state._currentCaseId && currentView === "doc-generation") {
+        url = "cases/" + state._currentCaseId + "/documents/generate";
+        body = { template_id: state._selectedTemplateId, case_data: caseData };
+      } else {
+        // Use a dummy case_id for standalone generation
+        url = "cases/standalone/documents/generate";
+        body = { template_id: state._selectedTemplateId, case_data: caseData };
+      }
+
+      try {
+        var resp = await fetchV1(url, { method: "POST", body: JSON.stringify(body) });
+        if (!resp.ok) {
+          var errData = await resp.json().catch(function() { return {}; });
+          showToast((errData.error && errData.error.message) || "Generation failed.", "error");
+          return;
+        }
+        var doc = await resp.json();
+        state._generatedDocId = doc.document_id || doc.id;
+        state._docGenContent = doc.content || "";
+        renderDocGenPreview(doc.content || "");
+        document.getElementById("docGenEditBtn").style.display = "inline-flex";
+      } catch (_e) {
+        showToast("Error generating document.", "error");
+      }
+    });
+
+    function renderDocGenPreview(content) {
+      var preview = document.getElementById("docGenPreview");
+      // Highlight missing fields (wrapped in {{ }})
+      var html = escapeHtml(content).replace(/\{\{([^}]+)\}\}/g, '<span class="missing-field">{{$1}}</span>');
+      preview.innerHTML = html;
+      document.getElementById("docGenPreviewWrap").style.display = "block";
+    }
+
+    document.getElementById("docGenEditBtn").addEventListener("click", function() {
+      var preview = document.getElementById("docGenPreview");
+      preview.contentEditable = "true";
+      preview.style.border = "2px solid var(--color-primary)";
+      preview.focus();
+      document.getElementById("docGenEditBtn").style.display = "none";
+      document.getElementById("docGenSaveBtn").style.display = "inline-flex";
+    });
+
+    document.getElementById("docGenSaveBtn").addEventListener("click", async function() {
+      if (!state._generatedDocId) return;
+      var preview = document.getElementById("docGenPreview");
+      var newContent = preview.textContent || preview.innerText || "";
+      try {
+        var resp = await fetchV1("generated-documents/" + state._generatedDocId, {
+          method: "PUT",
+          body: JSON.stringify({ content: newContent })
+        });
+        if (resp.ok) {
+          showToast("Document saved.", "success");
+          preview.contentEditable = "false";
+          preview.style.border = "";
+          document.getElementById("docGenSaveBtn").style.display = "none";
+          document.getElementById("docGenEditBtn").style.display = "inline-flex";
+          state._docGenContent = newContent;
+        } else {
+          showToast("Save failed.", "error");
+        }
+      } catch (_e) {
+        showToast("Error saving.", "error");
+      }
+    });
+
+    // Export functions
+    async function exportDocument(format) {
+      if (!state._generatedDocId) { showToast("Generate a document first.", "warning"); return; }
+      try {
+        var resp = await fetchV1("generated-documents/" + state._generatedDocId + "/export?format=" + format);
+        if (!resp.ok) { showToast("Export failed.", "error"); return; }
+        var data = await resp.json();
+        if (data.data) {
+          var byteChars = atob(data.data);
+          var byteNumbers = new Array(byteChars.length);
+          for (var i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+          var byteArray = new Uint8Array(byteNumbers);
+          var mimeType = format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+          var blob = new Blob([byteArray], { type: mimeType });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement("a");
+          a.href = url;
+          a.download = "document." + format;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
+      } catch (_e) {
+        showToast("Export error.", "error");
+      }
+    }
+
+    document.getElementById("docGenExportDocx").addEventListener("click", function() { exportDocument("docx"); });
+    document.getElementById("docGenExportPdf").addEventListener("click", function() { exportDocument("pdf"); });
+
+    /* Cross-feature: Generate doc from case detail */
+    document.getElementById("caseGenDocBtn").addEventListener("click", function() {
+      navigateTo("doc-generation");
+    });
+
+    /* ══════════════════════════════════════════════════════════
+       Phase 4: Admin Panel
+       ══════════════════════════════════════════════════════════ */
+
+    async function loadAdminUsers() {
+      var container = document.getElementById("adminUserList");
+      try {
+        var resp = await fetchV1("admin/users");
+        if (!resp.ok) { container.innerHTML = '<div class="notif-empty">Failed to load users.</div>'; return; }
+        var users = await resp.json();
+        if (!users.length) { container.innerHTML = '<div class="notif-empty">No users found.</div>'; return; }
+        container.innerHTML = users.map(function(u) {
+          var roleCls = (u.role || "").toLowerCase().indexOf("admin") !== -1 ? "role-badge role-badge--admin" :
+                        (u.role || "").toLowerCase().indexOf("analyst") !== -1 ? "role-badge role-badge--analyst" : "role-badge";
+          return '<div class="admin-user-row">' +
+            '<span class="admin-user-row-name">' + escapeHtml(u.full_name || u.name || "-") + '</span>' +
+            '<span class="admin-user-row-id">' + escapeHtml(u.employee_id || u.id || "") + '</span>' +
+            '<span class="' + roleCls + '">' + escapeHtml(u.role || "-") + '</span>' +
+            '</div>';
+        }).join("");
+      } catch (_e) {
+        container.innerHTML = '<div class="notif-empty">Error loading users.</div>';
+      }
+    }
+
+    /* ── Create User Modal ── */
+    var cuModal = document.getElementById("createUserModal");
+    document.getElementById("adminCreateUserBtn").addEventListener("click", function() { cuModal.classList.add("is-visible"); });
+    document.getElementById("cuClose").addEventListener("click", function() { cuModal.classList.remove("is-visible"); });
+    document.getElementById("cuCancelBtn").addEventListener("click", function() { cuModal.classList.remove("is-visible"); });
+    cuModal.addEventListener("click", function(e) { if (e.target === cuModal) cuModal.classList.remove("is-visible"); });
+
+    document.getElementById("cuSubmitBtn").addEventListener("click", async function() {
+      var empId = document.getElementById("cuEmployeeId").value.trim();
+      var fullName = document.getElementById("cuFullName").value.trim();
+      var role = document.getElementById("cuRole").value;
+      var password = document.getElementById("cuPassword").value;
+      if (!empId || !fullName || !password) {
+        showToast("All fields required.", "warning");
+        return;
+      }
+      try {
+        var resp = await fetchV1("admin/users", {
+          method: "POST",
+          body: JSON.stringify({ employee_id: empId, full_name: fullName, role: role, password: password })
+        });
+        if (resp.ok) {
+          showToast("User created.", "success");
+          cuModal.classList.remove("is-visible");
+          document.getElementById("cuEmployeeId").value = "";
+          document.getElementById("cuFullName").value = "";
+          document.getElementById("cuPassword").value = "";
+          loadAdminUsers();
+        } else {
+          var err = await resp.json().catch(function() { return {}; });
+          showToast((err.error && err.error.message) || "Failed to create user.", "error");
+        }
+      } catch (_e) {
+        showToast("Error creating user.", "error");
+      }
+    });
+
+    /* ── Audit Logs ── */
+    async function loadAuditLogs(page) {
+      state._auditPage = page || state._auditPage || 1;
+      var params = new URLSearchParams();
+      params.set("page", String(state._auditPage));
+      params.set("page_size", "50");
+      var dateFrom = document.getElementById("auditDateFrom").value;
+      var dateTo = document.getElementById("auditDateTo").value;
+      var action = document.getElementById("auditActionFilter").value;
+      var entity = document.getElementById("auditEntityFilter").value;
+      if (dateFrom) params.set("date_from", dateFrom);
+      if (dateTo) params.set("date_to", dateTo);
+      if (action) params.set("action_type", action);
+      if (entity) params.set("entity_type", entity);
+
+      var tbody = document.getElementById("auditTableBody");
+      try {
+        var resp = await fetchV1("audit-logs/?" + params.toString());
+        if (!resp.ok) { tbody.innerHTML = '<tr><td colspan="5">Failed to load audit logs.</td></tr>'; return; }
+        var data = await resp.json();
+        var logs = data.items || data.logs || [];
+        var total = data.total || logs.length;
+        var pageSize = data.page_size || 50;
+
+        if (!logs.length) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--color-text-muted)">No audit logs found.</td></tr>';
+          document.getElementById("auditPagination").innerHTML = "";
+          return;
+        }
+
+        tbody.innerHTML = logs.map(function(log) {
+          return '<tr>' +
+            '<td>' + (log.timestamp ? new Date(log.timestamp).toLocaleString() : "-") + '</td>' +
+            '<td>' + escapeHtml(log.user_id || "-") + '</td>' +
+            '<td>' + escapeHtml(log.action_type || log.action || "-") + '</td>' +
+            '<td>' + escapeHtml(log.entity_type || "-") + '</td>' +
+            '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(JSON.stringify(log.details || "")) + '">' + escapeHtml(JSON.stringify(log.details || "").substring(0, 60)) + '</td>' +
+            '</tr>';
+        }).join("");
+
+        var totalPages = Math.ceil(total / pageSize);
+        renderPagination(document.getElementById("auditPagination"), state._auditPage, totalPages, function(p) { loadAuditLogs(p); });
+      } catch (_e) {
+        tbody.innerHTML = '<tr><td colspan="5">Error loading audit logs.</td></tr>';
+      }
+    }
+
+    document.getElementById("auditFilterBtn").addEventListener("click", function() { loadAuditLogs(1); });
+
+    /* ══════════════════════════════════════════════════════════
+       Phase 5: Cross-Feature Integration & Polish
+       ══════════════════════════════════════════════════════════ */
+
+    /* ── Escape key for new modals ── */
+    document.addEventListener("keydown", function(e) {
+      if (e.key === "Escape") {
+        if (caseFormModal.classList.contains("is-visible")) { closeCaseForm(); e.preventDefault(); return; }
+        if (stmModal.classList.contains("is-visible")) { stmModal.classList.remove("is-visible"); e.preventDefault(); return; }
+        if (cuModal.classList.contains("is-visible")) { cuModal.classList.remove("is-visible"); e.preventDefault(); return; }
+        if (notifDropdown.classList.contains("is-open")) { notifDropdown.classList.remove("is-open"); notifBellBtn.setAttribute("aria-expanded", "false"); e.preventDefault(); return; }
+      }
+    });
+
   </script>
 </body>
 </html>
