@@ -18,6 +18,8 @@ RUN python -m pip install --upgrade pip setuptools wheel && \
     pip install -r /app/requirements.txt
 
 COPY app.py complaint_parsing.py ta_doc_parsing.py database.py index.html /app/
+COPY models.py auth.py audit.py cases.py quality_engine.py document_generator.py ocr_enhancements.py api_v1.py /app/
+COPY manifest.json sw.js /app/
 
 RUN adduser --disabled-password --gecos "" --home /home/appuser appuser && \
     chown -R appuser:appuser /app

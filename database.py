@@ -101,6 +101,15 @@ async def initialize_database() -> None:
         await conn.run_sync(metadata.create_all)
 
 
+async def initialize_all_tables() -> None:
+    """Create all IQW ORM tables (models.py) alongside legacy parse_records."""
+    from models import Base  # noqa: F811 — ORM declarative base
+
+    engine = await get_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
 async def get_database_health() -> dict[str, bool | str]:
     """Check basic database reachability and table readiness."""
     try:

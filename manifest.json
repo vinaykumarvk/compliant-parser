@@ -1,0 +1,21 @@
+{
+  "name": "HCP Investigation Quality Workbench",
+  "short_name": "IQW",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#1e40af",
+  "description": "AI-powered investigation quality workbench for Hyderabad City Police",
+  "icons": [
+    {
+      "src": "/static/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

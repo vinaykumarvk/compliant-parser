@@ -30,6 +30,7 @@ from database import (
     dispose_engine,
     get_database_health,
     get_engine,
+    initialize_all_tables,
     initialize_database,
     parse_records,
 )
@@ -278,6 +279,37 @@ class LoginRequest(BaseModel):
     password: str
 
 
+async def _seed_admin_user() -> None:
+    """Create a System_Admin user if the users table is empty."""
+    from auth import hash_password
+    from models import User, UserRole
+
+    engine = await get_engine()
+    async with engine.begin() as conn:
+        result = await conn.execute(sa.text("SELECT count(*) FROM users"))
+        count = result.scalar()
+        if count and count > 0:
+            return
+        admin_user = os.getenv("APP_ADMIN_USERNAME", "admin")
+        admin_pass = os.getenv("APP_ADMIN_PASSWORD", "admin")
+        pw_hash = hash_password(admin_pass)
+        import uuid as _uuid_mod
+        await conn.execute(
+            sa.text(
+                "INSERT INTO users (id, employee_id, full_name, role, password_hash, is_active, is_deleted, created_at) "
+                "VALUES (:id, :eid, :name, :role, :pw, true, false, now())"
+            ),
+            {
+                "id": str(_uuid_mod.uuid4()),
+                "eid": admin_user,
+                "name": "System Administrator",
+                "role": "System_Admin",
+                "pw": pw_hash,
+            },
+        )
+    logger.info("Seeded initial admin user: %s", admin_user)
+
+
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
     get_doc_ai_config()
@@ -285,11 +317,26 @@ async def lifespan(app_instance: FastAPI):
         await initialize_database()
     except Exception as exc:
         logger.warning("Database initialisation failed (history disabled): %s", exc)
+    try:
+        await initialize_all_tables()
+    except Exception as exc:
+        logger.warning("IQW table initialisation failed: %s", exc)
+    # Seed initial admin user if no users exist
+    try:
+        await _seed_admin_user()
+    except Exception as exc:
+        logger.warning("Admin user seeding skipped: %s", exc)
     yield
     await dispose_engine()
 
 
 app = FastAPI(title="ADS Complaint Analyser", version="1.1.0", lifespan=lifespan)
+
+from api_v1 import v1_router  # noqa: E402
+app.include_router(v1_router)
+
+from audit import AuditMiddleware  # noqa: E402
+app.add_middleware(AuditMiddleware)
 
 app.add_middleware(
     SessionMiddleware,
@@ -315,6 +362,31 @@ if _CORS_ORIGINS:
 # Simple in-process rate limiter for write endpoints (per-IP, sliding window).
 _RATE_LIMIT_MAX = int(os.getenv("RATE_LIMIT_RPM", "30"))
 _rate_limit_log: dict[str, list[float]] = defaultdict(list)
+
+
+@app.get("/manifest.json")
+def serve_manifest() -> JSONResponse:
+    """Serve PWA manifest."""
+    manifest_path = Path(__file__).resolve().parent / "manifest.json"
+    if manifest_path.exists():
+        import json as _manifest_json
+        data = _manifest_json.loads(manifest_path.read_text(encoding="utf-8"))
+        return JSONResponse(content=data, headers={"Cache-Control": "public, max-age=86400"})
+    raise HTTPException(status_code=404, detail="Manifest not found")
+
+
+@app.get("/sw.js")
+def serve_sw() -> HTMLResponse:
+    """Serve service worker from root scope."""
+    sw_path = Path(__file__).resolve().parent / "sw.js"
+    if sw_path.exists():
+        content = sw_path.read_text(encoding="utf-8")
+        return HTMLResponse(
+            content=content,
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+        )
+    raise HTTPException(status_code=404, detail="Service worker not found")
 
 
 @app.get("/", response_class=HTMLResponse)
