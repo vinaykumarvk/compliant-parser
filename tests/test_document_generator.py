@@ -1,12 +1,15 @@
-"""Tests for Phase 6: Document Generation Engine."""
+"""Tests for Phase 6: Document Generation Engine (async ORM version)."""
 
 from __future__ import annotations
 
-import unittest
+import sys
+import os
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from tests.conftest import AsyncTestCase
 
 from document_generator import (
-    _generated_documents,
-    _templates,
     export_docx,
     export_pdf,
     extract_placeholders,
@@ -16,153 +19,170 @@ from document_generator import (
     seed_templates,
     update_generated_document,
 )
+from models import DocumentTemplate
 
 
-class TestSeedTemplates(unittest.TestCase):
-    def setUp(self):
-        _templates.clear()
-        seed_templates()
+class TestSeedTemplates(AsyncTestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await seed_templates(self.db)
 
-    def test_templates_seeded(self):
-        self.assertGreaterEqual(len(_templates), 10)
+    async def test_templates_seeded(self):
+        templates = await list_templates(db=self.db)
+        self.assertGreaterEqual(len(templates), 10)
 
-    def test_categories_present(self):
-        categories = {t["category"] for t in _templates.values()}
+    async def test_categories_present(self):
+        templates = await list_templates(db=self.db)
+        categories = {t["category"] for t in templates}
         self.assertIn("FSL_Communication", categories)
         self.assertIn("Evidence_Certificate", categories)
         self.assertIn("Legal_Notice", categories)
         self.assertIn("Legal_Draft", categories)
 
 
-class TestListTemplates(unittest.TestCase):
-    def setUp(self):
-        _templates.clear()
-        seed_templates()
+class TestListTemplates(AsyncTestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await seed_templates(self.db)
 
-    def test_list_all(self):
-        result = list_templates()
+    async def test_list_all(self):
+        result = await list_templates(db=self.db)
         self.assertGreaterEqual(len(result), 10)
 
-    def test_filter_by_category(self):
-        result = list_templates("FSL_Communication")
+    async def test_filter_by_category(self):
+        result = await list_templates("FSL_Communication", db=self.db)
         self.assertGreater(len(result), 0)
         for t in result:
             self.assertEqual(t["category"], "FSL_Communication")
 
-    def test_filter_empty_category(self):
-        result = list_templates("Nonexistent")
+    async def test_filter_empty_category(self):
+        result = await list_templates("Nonexistent", db=self.db)
         self.assertEqual(len(result), 0)
 
 
-class TestGetTemplate(unittest.TestCase):
-    def setUp(self):
-        _templates.clear()
-        seed_templates()
+class TestGetTemplate(AsyncTestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await seed_templates(self.db)
 
-    def test_get_existing(self):
-        first_id = next(iter(_templates))
-        tpl = get_template(first_id)
+    async def test_get_existing(self):
+        templates = await list_templates(db=self.db)
+        first_id = templates[0]["id"]
+        tpl = await get_template(first_id, db=self.db)
         self.assertIsNotNone(tpl)
         self.assertIn("template_name", tpl)
         self.assertIn("template_body", tpl)
 
-    def test_get_nonexistent(self):
-        self.assertIsNone(get_template("nope"))
+    async def test_get_nonexistent(self):
+        tpl = await get_template("nope", db=self.db)
+        self.assertIsNone(tpl)
 
 
-class TestExtractPlaceholders(unittest.TestCase):
-    def test_extract(self):
+class TestExtractPlaceholders(AsyncTestCase):
+    """extract_placeholders is a pure function -- no db needed."""
+
+    async def test_extract(self):
         body = "Dear {{io_name}}, Case {{case_number}} at {{police_station}}."
         result = extract_placeholders(body)
         self.assertEqual(set(result), {"io_name", "case_number", "police_station"})
 
-    def test_no_placeholders(self):
+    async def test_no_placeholders(self):
         result = extract_placeholders("Plain text with no tokens.")
         self.assertEqual(result, [])
 
-    def test_duplicate_placeholders(self):
+    async def test_duplicate_placeholders(self):
         body = "{{name}} and {{name}} again"
         result = extract_placeholders(body)
         self.assertEqual(len(result), 1)
 
 
-class TestGenerateDocument(unittest.TestCase):
-    def setUp(self):
-        _templates.clear()
-        _generated_documents.clear()
-        seed_templates()
-        self.template_id = next(iter(_templates))
+class TestGenerateDocument(AsyncTestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await seed_templates(self.db)
+        templates = await list_templates(db=self.db)
+        self.template_id = templates[0]["id"]
 
-    def test_generate_basic(self):
-        doc = generate_document(
+    async def test_generate_basic(self):
+        doc = await generate_document(
             self.template_id,
             {"case_number": "0001/2026", "police_station": "Banjara Hills PS"},
             "u1",
+            db=self.db,
         )
         self.assertIn("id", doc)
         self.assertIn("content", doc)
         self.assertIn("auto_filled_fields", doc)
         self.assertIn("case_number", doc["auto_filled_fields"])
 
-    def test_missing_fields_detected(self):
-        doc = generate_document(self.template_id, {}, "u1")
+    async def test_missing_fields_detected(self):
+        doc = await generate_document(self.template_id, {}, "u1", db=self.db)
         self.assertGreater(len(doc["missing_fields"]), 0)
 
-    def test_stored_in_memory(self):
-        doc = generate_document(self.template_id, {}, "u1")
-        self.assertIn(doc["id"], _generated_documents)
+    async def test_stored_in_db(self):
+        doc = await generate_document(self.template_id, {}, "u1", db=self.db)
+        from models import GeneratedDocument
+        stored = await self.db.get(GeneratedDocument, doc["id"])
+        self.assertIsNotNone(stored)
 
 
-class TestUpdateGeneratedDocument(unittest.TestCase):
-    def setUp(self):
-        _templates.clear()
-        _generated_documents.clear()
-        seed_templates()
-        self.template_id = next(iter(_templates))
-        self.doc = generate_document(self.template_id, {}, "u1")
+class TestUpdateGeneratedDocument(AsyncTestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await seed_templates(self.db)
+        templates = await list_templates(db=self.db)
+        self.template_id = templates[0]["id"]
+        self.doc = await generate_document(self.template_id, {}, "u1", db=self.db)
 
-    def test_update_content(self):
-        updated = update_generated_document(self.doc["id"], "New content here", "u1")
+    async def test_update_content(self):
+        updated = await update_generated_document(
+            self.doc["id"], "New content here", "u1", db=self.db,
+        )
         self.assertEqual(updated["content"], "New content here")
         self.assertTrue(updated["io_edited"])
 
 
-class TestExportDocx(unittest.TestCase):
-    def setUp(self):
-        _templates.clear()
-        _generated_documents.clear()
-        seed_templates()
-        tid = next(iter(_templates))
-        self.doc = generate_document(tid, {"case_number": "0001/2026"}, "u1")
+class TestExportDocx(AsyncTestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await seed_templates(self.db)
+        templates = await list_templates(db=self.db)
+        tid = templates[0]["id"]
+        self.doc = await generate_document(
+            tid, {"case_number": "0001/2026"}, "u1", db=self.db,
+        )
 
-    def test_export_returns_bytes(self):
-        data = export_docx(self.doc["id"])
+    async def test_export_returns_bytes(self):
+        data = await export_docx(self.doc["id"], db=self.db)
         self.assertIsInstance(data, bytes)
         self.assertGreater(len(data), 100)
 
-    def test_docx_magic_bytes(self):
-        data = export_docx(self.doc["id"])
+    async def test_docx_magic_bytes(self):
+        data = await export_docx(self.doc["id"], db=self.db)
         # DOCX is a ZIP file, starts with PK
         self.assertTrue(data[:2] == b"PK")
 
 
-class TestExportPdf(unittest.TestCase):
-    def setUp(self):
-        _templates.clear()
-        _generated_documents.clear()
-        seed_templates()
-        tid = next(iter(_templates))
-        self.doc = generate_document(tid, {"case_number": "0001/2026"}, "u1")
+class TestExportPdf(AsyncTestCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await seed_templates(self.db)
+        templates = await list_templates(db=self.db)
+        tid = templates[0]["id"]
+        self.doc = await generate_document(
+            tid, {"case_number": "0001/2026"}, "u1", db=self.db,
+        )
 
-    def test_export_returns_bytes(self):
-        data = export_pdf(self.doc["id"])
+    async def test_export_returns_bytes(self):
+        data = await export_pdf(self.doc["id"], db=self.db)
         self.assertIsInstance(data, bytes)
         self.assertGreater(len(data), 100)
 
-    def test_pdf_magic_bytes(self):
-        data = export_pdf(self.doc["id"])
+    async def test_pdf_magic_bytes(self):
+        data = await export_pdf(self.doc["id"], db=self.db)
         self.assertTrue(data[:5] == b"%PDF-")
 
 
 if __name__ == "__main__":
+    import unittest
     unittest.main()

@@ -9,7 +9,12 @@ from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB, UUID
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +42,7 @@ _idx_created = sa.Index("ix_parse_records_created_at", parse_records.c.created_a
 
 _engine: AsyncEngine | None = None
 _connector: Any | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 _POOL_KWARGS = dict(pool_size=5, max_overflow=2, pool_recycle=1800)
 
@@ -94,6 +100,29 @@ async def get_engine() -> AsyncEngine:
     return _engine
 
 
+async def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Return (and lazily create) the async session factory."""
+    global _session_factory
+    if _session_factory is None:
+        engine = await get_engine()
+        _session_factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False,
+        )
+    return _session_factory
+
+
+async def get_db():
+    """FastAPI dependency that yields an async DB session with auto-commit."""
+    factory = await get_session_factory()
+    async with factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
 async def initialize_database() -> None:
     """Create the required schema before the app starts serving traffic."""
     engine = await get_engine()
@@ -146,6 +175,9 @@ async def dispose_engine() -> None:
     """Dispose of the engine and close the Cloud SQL connector on shutdown."""
     global _connector
     global _engine
+    global _session_factory
+
+    _session_factory = None
 
     if _engine is not None:
         await _engine.dispose()

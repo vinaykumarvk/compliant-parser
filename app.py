@@ -310,6 +310,21 @@ async def _seed_admin_user() -> None:
     logger.info("Seeded initial admin user: %s", admin_user)
 
 
+async def _seed_reference_data() -> None:
+    """Seed police stations, offence types, and document templates."""
+    from database import get_session_factory
+    from cases import seed_police_stations, seed_offence_types
+    from document_generator import seed_templates
+
+    factory = await get_session_factory()
+    async with factory() as session:
+        await seed_police_stations(session)
+        await seed_offence_types(session)
+        await seed_templates(session)
+        await session.commit()
+    logger.info("Seeded reference data (police stations, offence types, templates)")
+
+
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
     get_doc_ai_config()
@@ -326,6 +341,11 @@ async def lifespan(app_instance: FastAPI):
         await _seed_admin_user()
     except Exception as exc:
         logger.warning("Admin user seeding skipped: %s", exc)
+    # Seed reference data (police stations, offence types, templates)
+    try:
+        await _seed_reference_data()
+    except Exception as exc:
+        logger.warning("Reference data seeding skipped: %s", exc)
     yield
     await dispose_engine()
 

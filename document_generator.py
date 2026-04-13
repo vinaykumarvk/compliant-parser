@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Template-based document generation engine for the IQW platform.
 
-Provides in-memory template storage, Jinja2-powered placeholder substitution,
+Provides ORM-backed template storage, Jinja2-powered placeholder substitution,
 and export to DOCX / PDF formats.  All public functions return plain dicts so
 the API layer can serialise them directly.
 """
@@ -13,10 +13,18 @@ import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
+import sqlalchemy as sa
 from jinja2 import Template
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models import DocumentTemplate, GeneratedDocument
 
 # ---------------------------------------------------------------------------
-# In-memory stores
+# DEPRECATED: In-memory stores kept for backward compatibility only.
+# These dicts are no longer populated by the module — all reads and writes
+# now go through the async SQLAlchemy ORM layer.  Do NOT rely on them in
+# new code; they will be removed in a future release.
 # ---------------------------------------------------------------------------
 
 _templates: Dict[str, dict] = {}
@@ -46,13 +54,50 @@ def extract_placeholders(template_body: str) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Template CRUD
+# ORM → dict helpers
 # ---------------------------------------------------------------------------
 
-def seed_templates() -> None:
-    """Populate ``_templates`` with the 13 standard IQW document templates."""
+def _template_to_dict(tpl: DocumentTemplate) -> dict:
+    return {
+        "id": tpl.id,
+        "template_name": tpl.template_name,
+        "category": tpl.category.value if hasattr(tpl.category, "value") else tpl.category,
+        "template_body": tpl.template_body,
+        "placeholders": tpl.placeholders or [],
+        "is_active": tpl.is_active,
+        "version": tpl.version,
+    }
 
-    _templates.clear()
+
+def _gendoc_to_dict(doc: GeneratedDocument, auto_filled: list, missing: list) -> dict:
+    return {
+        "id": doc.id,
+        "template_id": doc.template_id,
+        "case_id": doc.case_id,
+        "category": doc.document_category.value if hasattr(doc.document_category, "value") else doc.document_category,
+        "content": doc.generated_content,
+        "auto_filled_fields": auto_filled,
+        "missing_fields": missing,
+        "created_by": doc.created_by,
+        "created_at": doc.created_at.isoformat() if doc.created_at else None,
+        "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
+        "io_edited": doc.io_edited,
+        "updated_by": doc.updated_by,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Template seeding
+# ---------------------------------------------------------------------------
+
+async def seed_templates(db: AsyncSession) -> None:
+    """Populate ``document_templates`` with the 13 standard IQW document templates."""
+
+    # Check if templates already seeded
+    result = await db.execute(select(sa.func.count()).select_from(DocumentTemplate))
+    count = result.scalar() or 0
+    if count > 0:
+        return  # already seeded
 
     defs: List[dict] = [
         # ---- FSL Communications (3) ----
@@ -392,47 +437,64 @@ def seed_templates() -> None:
 
     for d in defs:
         d["placeholders"] = extract_placeholders(d["template_body"])
-        d["is_active"] = True
-        _templates[d["id"]] = d
+        tpl = DocumentTemplate(
+            id=d["id"],
+            template_name=d["template_name"],
+            category=d["category"],
+            template_body=d["template_body"],
+            placeholders=d["placeholders"],
+            is_active=True,
+            version=d["version"],
+        )
+        db.add(tpl)
+    await db.flush()
 
 
 # ---------------------------------------------------------------------------
 # Template queries
 # ---------------------------------------------------------------------------
 
-def list_templates(category: Optional[str] = None) -> List[dict]:
+async def list_templates(
+    category: Optional[str] = None,
+    *,
+    db: AsyncSession,
+) -> List[dict]:
     """Return templates, optionally filtered by *category*."""
-    items = list(_templates.values())
+    stmt = select(DocumentTemplate).where(DocumentTemplate.is_active == True)  # noqa: E712
     if category:
-        items = [t for t in items if t["category"] == category]
-    return items
+        stmt = stmt.where(DocumentTemplate.category == category)
+    result = await db.execute(stmt)
+    return [_template_to_dict(t) for t in result.scalars().all()]
 
 
-def get_template(template_id: str) -> Optional[dict]:
+async def get_template(template_id: str, *, db: AsyncSession) -> Optional[dict]:
     """Return a single template by ID, or ``None``."""
-    return _templates.get(template_id)
+    tpl = await db.get(DocumentTemplate, template_id)
+    return _template_to_dict(tpl) if tpl else None
 
 
 # ---------------------------------------------------------------------------
 # Document generation
 # ---------------------------------------------------------------------------
 
-def generate_document(
+async def generate_document(
     template_id: str,
     case_data: dict,
     user_id: str,
+    *,
+    db: AsyncSession,
 ) -> dict:
     """Generate a document by substituting placeholders with *case_data*.
 
     Missing fields are left as ``{{placeholder}}`` and recorded in
     ``missing_fields`` so the IO can fill them in manually.
     """
-    tpl = _templates.get(template_id)
+    tpl = await db.get(DocumentTemplate, template_id)
     if tpl is None:
         raise ValueError(f"Template '{template_id}' not found.")
 
-    body = tpl["template_body"]
-    placeholders = tpl["placeholders"]
+    body = tpl.template_body
+    placeholders = tpl.placeholders or []
 
     # Build a safe data dict: missing keys map back to their token form.
     render_data: Dict[str, str] = {}
@@ -452,61 +514,62 @@ def generate_document(
     jinja_body = _PLACEHOLDER_RE.sub(r"{{ \1 }}", body)
     rendered = Template(jinja_body).render(**render_data)
 
-    doc_id = str(_uuid.uuid4())
-    now = _now_iso()
-    doc = {
-        "id": doc_id,
-        "template_id": template_id,
-        "case_id": case_data.get("case_id", ""),
-        "category": tpl["category"],
-        "content": rendered,
-        "auto_filled_fields": auto_filled,
-        "missing_fields": missing,
-        "created_by": user_id,
-        "created_at": now,
-        "updated_at": now,
-    }
-    _generated_documents[doc_id] = doc
-    return doc
+    doc = GeneratedDocument(
+        template_id=template_id,
+        case_id=case_data.get("case_id", ""),
+        document_category=tpl.category,
+        generated_content=rendered,
+        auto_filled_fields={"filled": auto_filled, "missing": missing},
+        created_by=user_id,
+    )
+    db.add(doc)
+    await db.flush()
+    return _gendoc_to_dict(doc, auto_filled, missing)
 
 
 # ---------------------------------------------------------------------------
 # IO editing
 # ---------------------------------------------------------------------------
 
-def update_generated_document(
+async def update_generated_document(
     doc_id: str,
     content: str,
     user_id: str,
+    *,
+    db: AsyncSession,
 ) -> dict:
     """Update the generated content after IO review / manual edits."""
-    doc = _generated_documents.get(doc_id)
+    doc = await db.get(GeneratedDocument, doc_id)
     if doc is None:
         raise ValueError(f"Generated document '{doc_id}' not found.")
 
-    doc["content"] = content
-    doc["updated_at"] = _now_iso()
-    doc["updated_by"] = user_id
-    doc["io_edited"] = True
-    return doc
+    doc.generated_content = content
+    doc.updated_by = user_id
+    doc.io_edited = True
+    await db.flush()
+    af = doc.auto_filled_fields or {}
+    return _gendoc_to_dict(doc, af.get("filled", []), af.get("missing", []))
 
 
 # ---------------------------------------------------------------------------
 # DOCX export
 # ---------------------------------------------------------------------------
 
-def export_docx(doc_id: str) -> bytes:
+async def export_docx(doc_id: str, *, db: AsyncSession) -> bytes:
     """Create a professionally formatted DOCX and return its bytes."""
     from docx import Document as DocxDocument
     from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-    doc = _generated_documents.get(doc_id)
+    doc = await db.get(GeneratedDocument, doc_id)
     if doc is None:
         raise ValueError(f"Generated document '{doc_id}' not found.")
 
-    tpl = _templates.get(doc["template_id"])
-    title = tpl["template_name"] if tpl else "Generated Document"
+    tpl = await db.get(DocumentTemplate, doc.template_id) if doc.template_id else None
+    title = tpl.template_name if tpl else "Generated Document"
+
+    category_val = doc.document_category.value if hasattr(doc.document_category, "value") else doc.document_category
+    created_at_str = doc.created_at.isoformat()[:10] if doc.created_at else ""
 
     docx = DocxDocument()
 
@@ -525,7 +588,7 @@ def export_docx(doc_id: str) -> bytes:
     meta = docx.add_paragraph()
     meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = meta.add_run(
-        f"Category: {doc['category']}  |  Generated: {doc['created_at'][:10]}"
+        f"Category: {category_val}  |  Generated: {created_at_str}"
     )
     run.font.size = Pt(9)
     run.font.italic = True
@@ -533,7 +596,8 @@ def export_docx(doc_id: str) -> bytes:
     docx.add_paragraph("")  # spacer
 
     # -- body: split on blank lines to form paragraphs; detect headings
-    for block in doc["content"].split("\n\n"):
+    content = doc.generated_content or ""
+    for block in content.split("\n\n"):
         block = block.strip()
         if not block:
             continue
@@ -573,19 +637,19 @@ def export_docx(doc_id: str) -> bytes:
 # PDF export
 # ---------------------------------------------------------------------------
 
-def export_pdf(doc_id: str) -> bytes:
+async def export_pdf(doc_id: str, *, db: AsyncSession) -> bytes:
     """Create a PDF rendition of the generated document and return bytes."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import cm
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 
-    doc = _generated_documents.get(doc_id)
+    doc = await db.get(GeneratedDocument, doc_id)
     if doc is None:
         raise ValueError(f"Generated document '{doc_id}' not found.")
 
-    tpl = _templates.get(doc["template_id"])
-    title = tpl["template_name"] if tpl else "Generated Document"
+    tpl = await db.get(DocumentTemplate, doc.template_id) if doc.template_id else None
+    title = tpl.template_name if tpl else "Generated Document"
 
     buf = io.BytesIO()
     pdf = SimpleDocTemplate(
@@ -631,7 +695,8 @@ def export_pdf(doc_id: str) -> bytes:
             .replace(">", "&gt;")
         )
 
-    for block in doc["content"].split("\n\n"):
+    content = doc.generated_content or ""
+    for block in content.split("\n\n"):
         block = block.strip()
         if not block:
             continue

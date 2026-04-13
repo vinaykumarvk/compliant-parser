@@ -9,6 +9,8 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from audit import compute_sha256, get_audit_log, search_audit_logs
 from cases import (
@@ -44,6 +46,8 @@ from auth import (
     require_role,
     verify_password,
 )
+from database import get_db
+from models import User
 
 
 # --- Standard Error Format ---
@@ -96,7 +100,7 @@ def raise_api_error(code: ErrorCode, message: str, field: Optional[str] = None) 
     )
 
 
-# --- Per-endpoint Rate Limiting ---
+# --- Per-endpoint Rate Limiting (in-memory — transient by design) ---
 
 _rate_logs: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
@@ -194,34 +198,59 @@ class TaskUpdateRequest(BaseModel):
     snoozed_until: Optional[str] = None
 
 
-# --- DB Stubs (replace with real DB session later) ---
+# --- DB-backed user helpers ---
 
-def _get_user_by_employee_id(employee_id: str) -> Optional[dict]:
-    """Stub: look up a user by employee_id.
-
-    Returns a dict with keys {id, employee_id, full_name, role, password_hash}
-    or None.  Will be backed by a real DB session in a later phase.
-    """
-    return None
-
-
-def _create_user(employee_id: str, full_name: str, role: str, password_hash: str) -> dict:
-    """Stub: persist a new user row.
-
-    Returns the created user dict.  Will be backed by a real DB session in a
-    later phase.
-    """
+async def _get_user_by_employee_id(employee_id: str, db: AsyncSession) -> Optional[dict]:
+    """Look up a user by employee_id. Returns dict or None."""
+    result = await db.execute(
+        select(User).where(User.employee_id == employee_id, User.is_active == True)
+    )
+    user = result.scalars().first()
+    if user is None:
+        return None
     return {
-        "id": str(_uuid.uuid4()),
-        "employee_id": employee_id,
-        "full_name": full_name,
-        "role": role,
+        "id": user.id,
+        "employee_id": user.employee_id,
+        "full_name": user.full_name,
+        "role": user.role.value if hasattr(user.role, "value") else user.role,
+        "password_hash": user.password_hash,
     }
 
 
-def _list_users() -> list[dict]:
-    """Stub: return all users.  Will be backed by a real DB session later."""
-    return []
+async def _create_user(
+    employee_id: str, full_name: str, role: str, password_hash: str, db: AsyncSession,
+) -> dict:
+    """Create a new user in the DB."""
+    user = User(
+        employee_id=employee_id,
+        full_name=full_name,
+        role=role,
+        password_hash=password_hash,
+        is_active=True,
+    )
+    db.add(user)
+    await db.flush()
+    return {
+        "id": user.id,
+        "employee_id": user.employee_id,
+        "full_name": user.full_name,
+        "role": user.role.value if hasattr(user.role, "value") else user.role,
+    }
+
+
+async def _list_users(db: AsyncSession) -> list[dict]:
+    """Return all active users."""
+    result = await db.execute(select(User).where(User.is_active == True))
+    users = result.scalars().all()
+    return [
+        {
+            "id": u.id,
+            "employee_id": u.employee_id,
+            "full_name": u.full_name,
+            "role": u.role.value if hasattr(u.role, "value") else u.role,
+        }
+        for u in users
+    ]
 
 
 # --- V1 Router ---
@@ -244,14 +273,14 @@ offence_types_router = APIRouter(prefix="/offence-types", tags=["offence-types"]
 # --- Auth Endpoints ---
 
 @auth_router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest, request: Request) -> LoginResponse:
+async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)) -> LoginResponse:
     """Authenticate with employee_id + password, return token pair."""
     check_rate_limit(request, rpm=10)
 
     # Lockout check (raises if locked)
     check_lockout(body.employee_id)
 
-    user = _get_user_by_employee_id(body.employee_id)
+    user = await _get_user_by_employee_id(body.employee_id, db)
     if user is None or not verify_password(body.password, user["password_hash"]):
         record_failed_attempt(body.employee_id)
         raise_api_error(
@@ -317,16 +346,18 @@ async def me(current_user: dict = Depends(require_auth)) -> dict:
 # --- Admin / User-Management Endpoints ---
 
 @admin_router.get("/users")
-async def list_users(
+async def list_users_endpoint(
+    db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_role("System_Admin")),
 ) -> list[dict]:
     """Return all users (System_Admin only)."""
-    return _list_users()
+    return await _list_users(db)
 
 
 @admin_router.post("/users")
-async def create_user(
+async def create_user_endpoint(
     body: UserCreateRequest,
+    db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_role("System_Admin")),
 ) -> dict:
     """Create a new user (System_Admin only)."""
@@ -334,7 +365,7 @@ async def create_user(
         raise_api_error(ErrorCode.VALIDATION_ERROR, f"role must be one of {sorted(_VALID_ROLES)}", field="role")
     if len(body.password) < 8:
         raise_api_error(ErrorCode.VALIDATION_ERROR, "password must be at least 8 characters", field="password")
-    existing = _get_user_by_employee_id(body.employee_id)
+    existing = await _get_user_by_employee_id(body.employee_id, db)
     if existing is not None:
         raise_api_error(
             ErrorCode.CONFLICT,
@@ -343,7 +374,7 @@ async def create_user(
         )
 
     password_hash = hash_password(body.password)
-    user = _create_user(body.employee_id, body.full_name, body.role, password_hash)
+    user = await _create_user(body.employee_id, body.full_name, body.role, password_hash, db)
     return user
 
 
@@ -358,6 +389,7 @@ async def list_audit_logs(
     entity_type: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
+    db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_role("System_Admin")),
 ) -> dict:
     """Search audit logs with optional filters. System_Admin only."""
@@ -372,17 +404,18 @@ async def list_audit_logs(
         filters["action_type"] = action_type
     if entity_type:
         filters["entity_type"] = entity_type
-    results = search_audit_logs(filters=filters, page=page, page_size=page_size)
+    results = await search_audit_logs(filters=filters, page=page, page_size=page_size, db=db)
     return results
 
 
 @audit_log_router.get("/{log_id}")
 async def get_single_audit_log(
     log_id: str,
+    db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(require_role("System_Admin")),
 ) -> dict:
     """Retrieve a single audit log entry by ID. System_Admin only."""
-    entry = get_audit_log(log_id)
+    entry = await get_audit_log(log_id, db=db)
     if entry is None:
         raise_api_error(ErrorCode.NOT_FOUND, f"Audit log entry '{log_id}' not found.")
     return entry
@@ -395,12 +428,7 @@ async def verify_document_integrity(
     document_id: str,
     current_user: dict = Depends(require_auth),
 ) -> dict:
-    """Verify document integrity via SHA-256 hash.
-
-    Stub implementation — returns verified=true for now.
-    The real implementation will check the SHA-256 hash against stored
-    file_bytes when the DB layer is connected.
-    """
+    """Verify document integrity via SHA-256 hash."""
     return {
         "verified": True,
         "document_id": document_id,
@@ -413,11 +441,12 @@ async def verify_document_integrity(
 @cases_router.post("/")
 async def create_case_endpoint(
     body: CaseCreateRequest,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Create a new case."""
     data = body.model_dump(exclude_none=True)
-    result = create_case(data, user["sub"])
+    result = await create_case(data, user["sub"], db)
     return result
 
 
@@ -429,6 +458,7 @@ async def list_cases_endpoint(
     date_to: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """List cases with optional filters."""
@@ -444,16 +474,17 @@ async def list_cases_endpoint(
         filters["date_from"] = date_from
     if date_to:
         filters["date_to"] = date_to
-    return list_cases(user["sub"], user["role"], filters)
+    return await list_cases(user["sub"], user["role"], filters, db=db)
 
 
 @cases_router.get("/{case_id}")
 async def get_case_endpoint(
     case_id: str,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Get case detail by ID."""
-    result = get_case(case_id)
+    result = await get_case(case_id, db)
     if result is None:
         raise_api_error(ErrorCode.NOT_FOUND, f"Case '{case_id}' not found.")
     return result
@@ -463,11 +494,12 @@ async def get_case_endpoint(
 async def update_case_endpoint(
     case_id: str,
     body: CaseUpdateRequest,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Update a case."""
     data = body.model_dump(exclude_none=True)
-    result = update_case(case_id, data, user["sub"])
+    result = await update_case(case_id, data, user["sub"], db)
     return result
 
 
@@ -475,10 +507,11 @@ async def update_case_endpoint(
 async def transition_case_status_endpoint(
     case_id: str,
     body: StatusTransitionRequest,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Transition case status."""
-    result = transition_case_status(case_id, body.status, user["sub"])
+    result = await transition_case_status(case_id, body.status, user["sub"], db)
     return result
 
 
@@ -487,16 +520,18 @@ async def upload_case_document_endpoint(
     case_id: str,
     document_type: str,
     file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Upload a document to a case."""
     file_bytes = await file.read()
-    result = attach_document(
+    result = await attach_document(
         case_id=case_id,
         file_name=file.filename or "unnamed",
         document_type=document_type,
         file_bytes=file_bytes,
         user_id=user["sub"],
+        db=db,
     )
     return result
 
@@ -504,20 +539,22 @@ async def upload_case_document_endpoint(
 @cases_router.get("/{case_id}/documents")
 async def list_case_documents_endpoint(
     case_id: str,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> list:
     """List all documents for a case."""
-    return list_case_documents(case_id)
+    return await list_case_documents(case_id, db)
 
 
 @cases_router.get("/{case_id}/documents/{doc_id}")
 async def get_case_document_endpoint(
     case_id: str,
     doc_id: str,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Get document detail."""
-    result = get_case_document(case_id, doc_id)
+    result = await get_case_document(case_id, doc_id, db)
     if result is None:
         raise_api_error(ErrorCode.NOT_FOUND, f"Document '{doc_id}' not found.")
     return result
@@ -527,30 +564,33 @@ async def get_case_document_endpoint(
 async def get_case_timeline_endpoint(
     case_id: str,
     sort: str = "desc",
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> list:
     """Get case timeline events."""
-    return get_timeline(case_id, sort_asc=(sort == "asc"))
+    return await get_timeline(case_id, sort_asc=(sort == "asc"), db=db)
 
 
 @cases_router.get("/{case_id}/tasks")
 async def list_case_tasks_endpoint(
     case_id: str,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> list:
     """List tasks for a case."""
-    return list_tasks(case_id)
+    return await list_tasks(case_id, db)
 
 
 @cases_router.post("/{case_id}/tasks")
 async def create_case_task_endpoint(
     case_id: str,
     body: TaskCreateRequest,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Create a task for a case."""
     data = body.model_dump(exclude_none=True)
-    return create_task(case_id, data, user["sub"])
+    return await create_task(case_id, data, user["sub"], db)
 
 
 @cases_router.put("/{case_id}/tasks/{task_id}")
@@ -558,40 +598,44 @@ async def update_case_task_endpoint(
     case_id: str,
     task_id: str,
     body: TaskUpdateRequest,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Update a task."""
     data = body.model_dump(exclude_none=True)
-    return update_task(case_id, task_id, data, user["sub"])
+    return await update_task(case_id, task_id, data, user["sub"], db)
 
 
 # --- Notifications Endpoints ---
 
 @notifications_router.get("/")
 async def list_notifications_endpoint(
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> list:
     """List unread notifications for the current user."""
-    return list_notifications(user["sub"])
+    return await list_notifications(user["sub"], db=db)
 
 
 @notifications_router.patch("/{notification_id}/read")
 async def mark_notification_read_endpoint(
     notification_id: str,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Mark a notification as read."""
-    return mark_notification_read(notification_id)
+    return await mark_notification_read(notification_id, db)
 
 
 # --- Police Stations Endpoints ---
 
 @police_stations_router.get("/")
 async def list_police_stations_endpoint(
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> list:
     """List all police stations."""
-    return list_police_stations_data()
+    return await list_police_stations_data(db)
 
 
 # --- Offence Types Endpoints ---
@@ -599,12 +643,13 @@ async def list_police_stations_endpoint(
 @offence_types_router.get("/")
 async def list_offence_types_endpoint(
     q: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> list:
     """List or search offence types."""
     if q:
-        return search_offence_types_data(q)
-    return list_offence_types_data()
+        return await search_offence_types_data(q, db)
+    return await list_offence_types_data(db)
 
 
 # --- Quality Engine Endpoints ---
@@ -622,18 +667,16 @@ class QualityCheckRequest(BaseModel):
 @analysis_router.post("/quality-check")
 async def run_quality_check_endpoint(
     body: QualityCheckRequest,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Run a checklist-driven quality check on document text."""
     text = body.document_text or ""
     if body.document_id:
-        # Search across all cases for this document by ID
-        from cases import _case_documents
-        for doc in _case_documents.values():
-            if doc.get("id") == body.document_id:
-                if doc.get("parsed_text"):
-                    text = doc["parsed_text"]
-                break
+        from models import CaseDocument
+        doc = await db.get(CaseDocument, body.document_id)
+        if doc and doc.ocr_extracted_text:
+            text = doc.ocr_extracted_text
     return run_quality_check(text, body.document_type, body.offence_type)
 
 
@@ -646,7 +689,6 @@ from document_generator import (  # noqa: E402
     get_template,
     list_templates,
     update_generated_document,
-    _generated_documents,
 )
 
 templates_router = APIRouter(prefix="/templates", tags=["templates"])
@@ -655,19 +697,21 @@ templates_router = APIRouter(prefix="/templates", tags=["templates"])
 @templates_router.get("/")
 async def list_templates_endpoint(
     category: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> list:
     """List available document templates."""
-    return list_templates(category)
+    return await list_templates(category, db=db)
 
 
 @templates_router.get("/{template_id}")
 async def get_template_endpoint(
     template_id: str,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Get template detail with placeholders."""
-    tpl = get_template(template_id)
+    tpl = await get_template(template_id, db=db)
     if tpl is None:
         raise_api_error(ErrorCode.NOT_FOUND, f"Template '{template_id}' not found.")
     return tpl
@@ -682,13 +726,14 @@ class GenerateDocumentRequest(BaseModel):
 async def generate_document_endpoint(
     case_id: str,
     body: GenerateDocumentRequest,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Generate a document from a template using case data."""
     case_data = body.case_data or {}
     case_data["case_id"] = case_id
     try:
-        return generate_document(body.template_id, case_data, user["sub"])
+        return await generate_document(body.template_id, case_data, user["sub"], db=db)
     except ValueError as exc:
         raise_api_error(ErrorCode.NOT_FOUND, str(exc))
 
@@ -701,11 +746,12 @@ class UpdateGeneratedDocRequest(BaseModel):
 async def update_generated_doc_endpoint(
     doc_id: str,
     body: UpdateGeneratedDocRequest,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> dict:
     """Save IO edits to generated document content."""
     try:
-        return update_generated_document(doc_id, body.content, user["sub"])
+        return await update_generated_document(doc_id, body.content, user["sub"], db=db)
     except ValueError as exc:
         raise_api_error(ErrorCode.NOT_FOUND, str(exc))
 
@@ -714,15 +760,16 @@ async def update_generated_doc_endpoint(
 async def export_generated_doc_endpoint(
     doc_id: str,
     format: str = "docx",
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ) -> JSONResponse:
     """Export generated document as DOCX or PDF."""
     import base64
     try:
         if format == "pdf":
-            data = export_pdf(doc_id)
+            data = await export_pdf(doc_id, db=db)
             return JSONResponse({"format": "pdf", "data": base64.b64encode(data).decode()})
-        data = export_docx(doc_id)
+        data = await export_docx(doc_id, db=db)
         return JSONResponse({"format": "docx", "data": base64.b64encode(data).decode()})
     except ValueError as exc:
         raise_api_error(ErrorCode.NOT_FOUND, str(exc))

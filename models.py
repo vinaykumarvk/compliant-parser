@@ -242,7 +242,7 @@ class AuditMixin:
 
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
-        server_default=sa.text("now()"),
+        server_default=sa.func.now(),
         nullable=False,
     )
     updated_at: Mapped[Optional[datetime]] = mapped_column(
@@ -258,7 +258,7 @@ class AuditMixin:
         sa.String, nullable=True,
     )
     is_deleted: Mapped[bool] = mapped_column(
-        sa.Boolean, default=False, server_default=sa.text("false"), nullable=False,
+        sa.Boolean, default=False, nullable=False,
     )
     deleted_at: Mapped[Optional[datetime]] = mapped_column(
         sa.DateTime(timezone=True), nullable=True,
@@ -293,7 +293,7 @@ class PoliceStation(AuditMixin, Base):
     city: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     state: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     is_active: Mapped[bool] = mapped_column(
-        sa.Boolean, default=True, server_default=sa.text("true"), nullable=False,
+        sa.Boolean, default=True, nullable=False,
     )
 
     # relationships
@@ -315,7 +315,7 @@ class OffenceType(AuditMixin, Base):
     ipc_section: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(
-        sa.Boolean, default=True, server_default=sa.text("true"), nullable=False,
+        sa.Boolean, default=True, nullable=False,
     )
 
     # relationships
@@ -347,7 +347,7 @@ class User(AuditMixin, Base):
     phone: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     password_hash: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     is_active: Mapped[bool] = mapped_column(
-        sa.Boolean, default=True, server_default=sa.text("true"), nullable=False,
+        sa.Boolean, default=True, nullable=False,
     )
     last_login_at: Mapped[Optional[datetime]] = mapped_column(
         sa.DateTime(timezone=True), nullable=True,
@@ -492,10 +492,10 @@ class CaseDocument(AuditMixin, Base):
     )
     language_detected: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     version: Mapped[int] = mapped_column(
-        sa.Integer, default=1, server_default=sa.text("1"), nullable=False,
+        sa.Integer, default=1, nullable=False,
     )
     is_latest_version: Mapped[bool] = mapped_column(
-        sa.Boolean, default=True, server_default=sa.text("true"), nullable=False,
+        sa.Boolean, default=True, nullable=False,
     )
     parsed_output: Mapped[Optional[dict]] = mapped_column(sa.JSON, nullable=True)
 
@@ -569,11 +569,11 @@ class AIAnalysisResult(AuditMixin, Base):
         nullable=True,
     )
     has_uncertainty_flag: Mapped[bool] = mapped_column(
-        sa.Boolean, default=False, server_default=sa.text("false"), nullable=False,
+        sa.Boolean, default=False, nullable=False,
     )
     uncertainty_tags: Mapped[Optional[list]] = mapped_column(sa.JSON, nullable=True)
     io_reviewed: Mapped[bool] = mapped_column(
-        sa.Boolean, default=False, server_default=sa.text("false"), nullable=False,
+        sa.Boolean, default=False, nullable=False,
     )
     io_review_action: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     io_review_notes: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
@@ -648,7 +648,7 @@ class CongruenceAlert(AuditMixin, Base):
     excerpt_doc_a: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     excerpt_doc_b: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     is_dismissed: Mapped[bool] = mapped_column(
-        sa.Boolean, default=False, server_default=sa.text("false"), nullable=False,
+        sa.Boolean, default=False, nullable=False,
     )
     dismiss_reason_code: Mapped[Optional[DismissReasonCode]] = mapped_column(
         sa.Enum(DismissReasonCode, name="dismissreasoncode", create_constraint=True, native_enum=False),
@@ -662,7 +662,7 @@ class CongruenceAlert(AuditMixin, Base):
         sa.DateTime(timezone=True), nullable=True,
     )
     feeds_model_refinement: Mapped[bool] = mapped_column(
-        sa.Boolean, default=False, server_default=sa.text("false"), nullable=False,
+        sa.Boolean, default=False, nullable=False,
     )
 
     # relationships
@@ -706,10 +706,10 @@ class SectionRecommendation(AuditMixin, Base):
         sa.JSON, nullable=True,
     )
     is_primary: Mapped[bool] = mapped_column(
-        sa.Boolean, default=False, server_default=sa.text("false"), nullable=False,
+        sa.Boolean, default=False, nullable=False,
     )
     is_alternative: Mapped[bool] = mapped_column(
-        sa.Boolean, default=False, server_default=sa.text("false"), nullable=False,
+        sa.Boolean, default=False, nullable=False,
     )
     disclaimer_text: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
 
@@ -741,7 +741,7 @@ class GeneratedDocument(AuditMixin, Base):
     generated_content: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     auto_filled_fields: Mapped[Optional[dict]] = mapped_column(sa.JSON, nullable=True)
     io_edited: Mapped[bool] = mapped_column(
-        sa.Boolean, default=False, server_default=sa.text("false"), nullable=False,
+        sa.Boolean, default=False, nullable=False,
     )
     export_format: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     file_path: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
@@ -783,10 +783,10 @@ class DocumentTemplate(AuditMixin, Base):
     template_body: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     placeholders: Mapped[Optional[list]] = mapped_column(sa.JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(
-        sa.Boolean, default=True, server_default=sa.text("true"), nullable=False,
+        sa.Boolean, default=True, nullable=False,
     )
     version: Mapped[int] = mapped_column(
-        sa.Integer, default=1, server_default=sa.text("1"), nullable=False,
+        sa.Integer, default=1, nullable=False,
     )
     approved_by: Mapped[Optional[str]] = mapped_column(
         ForeignKey("users.id"), nullable=True,
@@ -828,7 +828,7 @@ class InvestigationPlan(AuditMixin, Base):
         sa.JSON, nullable=True,
     )
     is_editable: Mapped[bool] = mapped_column(
-        sa.Boolean, default=True, server_default=sa.text("true"), nullable=False,
+        sa.Boolean, default=True, nullable=False,
     )
 
     # relationships
@@ -897,7 +897,7 @@ class KnowledgeBaseEntry(AuditMixin, Base):
         sa.JSON, nullable=True,
     )
     version: Mapped[int] = mapped_column(
-        sa.Integer, default=1, server_default=sa.text("1"), nullable=False,
+        sa.Integer, default=1, nullable=False,
     )
     status: Mapped[KBEntryStatus] = mapped_column(
         sa.Enum(KBEntryStatus, name="kbentrystatus", create_constraint=True, native_enum=False),
@@ -949,7 +949,7 @@ class AuditLog(Base):
     session_id: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
-        server_default=sa.text("now()"),
+        server_default=sa.func.now(),
         nullable=False,
     )
     created_by: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
@@ -972,7 +972,7 @@ class Notification(AuditMixin, Base):
     type: Mapped[str] = mapped_column(sa.String, nullable=False)
     message: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
     is_read: Mapped[bool] = mapped_column(
-        sa.Boolean, default=False, server_default=sa.text("false"), nullable=False,
+        sa.Boolean, default=False, nullable=False,
     )
     entity_type: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     entity_id: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
@@ -1035,7 +1035,7 @@ class UsageEvent(AuditMixin, Base):
     details: Mapped[Optional[dict]] = mapped_column(sa.JSON, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
-        server_default=sa.text("now()"),
+        server_default=sa.func.now(),
         nullable=False,
     )
 
