@@ -112,11 +112,12 @@ def get_case(case_id: str) -> Optional[dict]:
     return _cases.get(case_id)
 
 
-def list_cases(user_id: str, role: str, filters: Optional[dict] = None) -> list:
-    """List cases visible to the caller.
+def list_cases(user_id: str, role: str, filters: Optional[dict] = None) -> dict:
+    """List cases visible to the caller with pagination.
 
     IO sees only own cases; System_Admin / Admin sees all.
-    Filters: status, police_station_id, date_from, date_to.
+    Filters: status, police_station_id, date_from, date_to, page, page_size.
+    Returns: {"items": [...], "total": N, "page": P, "page_size": S}
     """
     if role in ("System_Admin", "Admin"):
         items = list(_cases.values())
@@ -133,7 +134,16 @@ def list_cases(user_id: str, role: str, filters: Optional[dict] = None) -> list:
         if filters.get("date_to"):
             items = [c for c in items if c["created_at"] <= filters["date_to"]]
 
-    return items
+    # Sort by created_at descending
+    items.sort(key=lambda c: c.get("created_at", ""), reverse=True)
+
+    total = len(items)
+    page = int((filters or {}).get("page", 1))
+    page_size = int((filters or {}).get("page_size", 20))
+    start = (page - 1) * page_size
+    end = start + page_size
+
+    return {"items": items[start:end], "total": total, "page": page, "page_size": page_size}
 
 
 def update_case(case_id: str, data: dict, user_id: str) -> dict:

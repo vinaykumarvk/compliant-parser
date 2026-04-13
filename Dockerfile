@@ -1,29 +1,43 @@
+# ── Builder stage ──
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    pip wheel --no-cache-dir -r requirements.txt -w /wheels && \
+    pip install --no-cache-dir -r requirements.txt
+
+# ── Runtime stage ──
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PORT=8080
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libpq-dev gcc \
+    ca-certificates libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /app/requirements.txt
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
 
-RUN python -m pip install --upgrade pip setuptools wheel && \
-    pip install -r /app/requirements.txt
+RUN adduser --disabled-password --gecos "" --home /home/appuser appuser
 
-COPY app.py complaint_parsing.py ta_doc_parsing.py database.py index.html /app/
-COPY models.py auth.py audit.py cases.py quality_engine.py document_generator.py ocr_enhancements.py api_v1.py /app/
-COPY manifest.json sw.js /app/
+COPY *.py /app/
+COPY index.html manifest.json sw.js /app/
 
-RUN adduser --disabled-password --gecos "" --home /home/appuser appuser && \
-    chown -R appuser:appuser /app
-
+RUN chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8080
@@ -31,4 +45,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT:-8080}/health')" || exit 1
 
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}"]
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080} --workers ${WEB_CONCURRENCY:-2}"]

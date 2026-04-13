@@ -355,8 +355,9 @@ if _CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_CORS_ORIGINS,
-        allow_methods=["GET", "POST", "DELETE"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+        allow_credentials=True,
     )
 
 # Simple in-process rate limiter for write endpoints (per-IP, sliding window).

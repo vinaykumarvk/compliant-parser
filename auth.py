@@ -26,10 +26,16 @@ def _raise_api_error(code_name: str, message: str, field: Optional[str] = None) 
 # Configuration
 # ---------------------------------------------------------------------------
 
-JWT_SECRET_KEY: str = os.getenv(
-    "JWT_SECRET_KEY",
-    os.getenv("APP_SESSION_SECRET", "dev-insecure-secret-change-me"),
-)
+_jwt_secret_env = os.getenv("JWT_SECRET_KEY") or os.getenv("APP_SESSION_SECRET")
+if not _jwt_secret_env:
+    import warnings
+    warnings.warn(
+        "JWT_SECRET_KEY not set — using insecure default. "
+        "Set JWT_SECRET_KEY env var before deploying to production.",
+        stacklevel=1,
+    )
+    _jwt_secret_env = "dev-insecure-secret-change-me"
+JWT_SECRET_KEY: str = _jwt_secret_env
 JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
 
 MAX_FAILED_ATTEMPTS: int = 5
@@ -58,7 +64,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 def create_access_token(
     user_id: str,
     role: str,
-    expires_delta: timedelta = timedelta(hours=8),
+    expires_delta: timedelta = timedelta(minutes=30),
 ) -> str:
     now = datetime.now(timezone.utc)
     payload = {
@@ -73,11 +79,13 @@ def create_access_token(
 
 def create_refresh_token(
     user_id: str,
+    role: str = "",
     expires_delta: timedelta = timedelta(hours=24),
 ) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
+        "role": role,
         "type": "refresh",
         "iat": now,
         "exp": now + expires_delta,

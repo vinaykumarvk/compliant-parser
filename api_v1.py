@@ -139,11 +139,23 @@ class RefreshRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
 
+_VALID_ROLES = {"IO", "Clerk", "AI_Admin", "System_Admin", "Analyst", "Investigator", "Supervisor"}
+
 class UserCreateRequest(BaseModel):
     employee_id: str
     full_name: str
     role: str
     password: str
+
+    @classmethod
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+
+    def validate_role(self) -> None:
+        if self.role not in _VALID_ROLES:
+            raise ValueError(f"role must be one of {_VALID_ROLES}")
+        if len(self.password) < 8:
+            raise ValueError("password must be at least 8 characters")
 
 
 # --- Case Workbench Pydantic Schemas ---
@@ -250,7 +262,7 @@ async def login(body: LoginRequest, request: Request) -> LoginResponse:
     clear_failed_attempts(body.employee_id)
 
     access_token = create_access_token(user["id"], user["role"])
-    refresh_token = create_refresh_token(user["id"])
+    refresh_token = create_refresh_token(user["id"], role=user["role"])
 
     return LoginResponse(
         access_token=access_token,
@@ -269,15 +281,13 @@ async def refresh(body: RefreshRequest, request: Request) -> TokenResponse:
     """Exchange a valid refresh token for a new access token."""
     check_rate_limit(request, rpm=10)
 
+    if is_blacklisted(body.refresh_token):
+        raise_api_error(ErrorCode.AUTHENTICATION_ERROR, "Token has been revoked.")
+
     payload = decode_token(body.refresh_token)
-    if payload is None:
-        raise_api_error(ErrorCode.AUTHENTICATION_ERROR, "Invalid or expired refresh token.")
 
     if payload.get("type") != "refresh":
         raise_api_error(ErrorCode.AUTHENTICATION_ERROR, "Token is not a refresh token.")
-
-    if is_blacklisted(body.refresh_token):
-        raise_api_error(ErrorCode.AUTHENTICATION_ERROR, "Token has been revoked.")
 
     new_access = create_access_token(payload["sub"], payload.get("role", ""))
     return TokenResponse(access_token=new_access)
@@ -320,6 +330,10 @@ async def create_user(
     current_user: dict = Depends(require_role("System_Admin")),
 ) -> dict:
     """Create a new user (System_Admin only)."""
+    if body.role not in _VALID_ROLES:
+        raise_api_error(ErrorCode.VALIDATION_ERROR, f"role must be one of {sorted(_VALID_ROLES)}", field="role")
+    if len(body.password) < 8:
+        raise_api_error(ErrorCode.VALIDATION_ERROR, "password must be at least 8 characters", field="password")
     existing = _get_user_by_employee_id(body.employee_id)
     if existing is not None:
         raise_api_error(
@@ -613,9 +627,13 @@ async def run_quality_check_endpoint(
     """Run a checklist-driven quality check on document text."""
     text = body.document_text or ""
     if body.document_id:
-        doc = get_case_document("", body.document_id)
-        if doc and doc.get("parsed_text"):
-            text = doc["parsed_text"]
+        # Search across all cases for this document by ID
+        from cases import _case_documents
+        for doc in _case_documents.values():
+            if doc.get("id") == body.document_id:
+                if doc.get("parsed_text"):
+                    text = doc["parsed_text"]
+                break
     return run_quality_check(text, body.document_type, body.offence_type)
 
 
@@ -669,7 +687,10 @@ async def generate_document_endpoint(
     """Generate a document from a template using case data."""
     case_data = body.case_data or {}
     case_data["case_id"] = case_id
-    return generate_document(body.template_id, case_data, user["sub"])
+    try:
+        return generate_document(body.template_id, case_data, user["sub"])
+    except ValueError as exc:
+        raise_api_error(ErrorCode.NOT_FOUND, str(exc))
 
 
 class UpdateGeneratedDocRequest(BaseModel):
@@ -683,7 +704,10 @@ async def update_generated_doc_endpoint(
     user: dict = Depends(require_auth),
 ) -> dict:
     """Save IO edits to generated document content."""
-    return update_generated_document(doc_id, body.content, user["sub"])
+    try:
+        return update_generated_document(doc_id, body.content, user["sub"])
+    except ValueError as exc:
+        raise_api_error(ErrorCode.NOT_FOUND, str(exc))
 
 
 @v1_router.get("/generated-documents/{doc_id}/export")
@@ -694,11 +718,14 @@ async def export_generated_doc_endpoint(
 ) -> JSONResponse:
     """Export generated document as DOCX or PDF."""
     import base64
-    if format == "pdf":
-        data = export_pdf(doc_id)
-        return JSONResponse({"format": "pdf", "data": base64.b64encode(data).decode()})
-    data = export_docx(doc_id)
-    return JSONResponse({"format": "docx", "data": base64.b64encode(data).decode()})
+    try:
+        if format == "pdf":
+            data = export_pdf(doc_id)
+            return JSONResponse({"format": "pdf", "data": base64.b64encode(data).decode()})
+        data = export_docx(doc_id)
+        return JSONResponse({"format": "docx", "data": base64.b64encode(data).decode()})
+    except ValueError as exc:
+        raise_api_error(ErrorCode.NOT_FOUND, str(exc))
 
 
 # --- OCR Enhancement Endpoints ---

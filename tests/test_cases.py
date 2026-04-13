@@ -106,13 +106,15 @@ class TestCaseCRUD(unittest.TestCase):
         create_case({"case_type": "FIR", "crime_no": "0003/2026"}, "u1")
         create_case({"case_type": "FIR", "crime_no": "0004/2026"}, "u2")
         result = list_cases("u1", "IO")
-        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result["items"]), 1)
+        self.assertEqual(result["total"], 1)
 
     def test_list_cases_admin_all(self):
         create_case({"case_type": "FIR", "crime_no": "0005/2026"}, "u1")
         create_case({"case_type": "FIR", "crime_no": "0006/2026"}, "u2")
         result = list_cases("u1", "System_Admin")
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result["items"]), 2)
+        self.assertEqual(result["total"], 2)
 
     def test_update_case(self):
         case = create_case({"case_type": "FIR", "crime_no": "0007/2026"}, "u1")
