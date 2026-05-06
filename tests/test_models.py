@@ -181,6 +181,18 @@ class TestModelInstantiation(AsyncTestCase):
         obj = SectionRecommendation(section_code="303 BNS", act_name=ActName.BNS)
         self.assertEqual(obj.act_name, ActName.BNS)
 
+    async def test_section_recommendation_enhanced_fields(self):
+        obj = SectionRecommendation(
+            section_code="303",
+            act_name=ActName.BNS,
+            applicability_rank=1,
+            statutory_text="Whoever intending to take dishonestly...",
+            ingredient_mapping=[{"ingredient": "taking", "status": "satisfied", "complaint_fact": "stolen"}],
+        )
+        self.assertEqual(obj.applicability_rank, 1)
+        self.assertEqual(obj.statutory_text, "Whoever intending to take dishonestly...")
+        self.assertEqual(len(obj.ingredient_mapping), 1)
+
     async def test_generated_document(self):
         obj = GeneratedDocument(document_category=DocumentCategory.Legal_Draft)
         self.assertEqual(obj.digital_signature_status, SignatureStatus.Unsigned)

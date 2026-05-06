@@ -321,13 +321,46 @@ def _checklist_evaluation_public(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _dedupe_evaluations(evaluations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse evaluations that produce identical user-facing output.
+
+    Multiple checklist questions within the same category can produce the same
+    ``missing_detail`` text.  When that happens we keep only the
+    highest-severity entry so the UI never shows duplicate action items.
+    Evaluations with status ``present`` or ``not_applicable`` are kept as-is
+    (they don't surface as action items).
+    """
+    deduped: list[dict[str, Any]] = []
+    seen_action_keys: dict[str, int] = {}
+    for item in evaluations:
+        status = str(item.get("evaluation_status") or "")
+        md = (item.get("missing_detail") or "").strip().lower()
+        cat = (item.get("category") or "").strip().lower()
+        # Only deduplicate actionable items that share the same missing_detail
+        if status in ("missing", "uncertain") and md:
+            key = f"{cat}::{md}"
+            if key in seen_action_keys:
+                # Keep the one with higher severity
+                existing_idx = seen_action_keys[key]
+                existing_sev = _checklist_severity_rank(deduped[existing_idx].get("severity"))
+                new_sev = _checklist_severity_rank(item.get("severity"))
+                if new_sev > existing_sev:
+                    deduped[existing_idx] = item
+                continue
+            seen_action_keys[key] = len(deduped)
+        deduped.append(item)
+    return deduped
+
+
 def _build_checklist_analysis_payload(
     parsed_output: dict[str, Any],
     evaluations: list[dict[str, Any]],
     *,
     purpose: str = "petition",
 ) -> dict[str, Any]:
-    public_evaluations = [_checklist_evaluation_public(item) for item in evaluations or []]
+    public_evaluations = _dedupe_evaluations(
+        [_checklist_evaluation_public(item) for item in evaluations or []]
+    )
     public_evaluations.sort(
         key=lambda item: (
             _CHECKLIST_STATUS_ORDER.get(str(item.get("evaluation_status") or ""), 99),
@@ -403,11 +436,20 @@ async def enrich_parsed_output_with_checklist(
         existing_analysis = None
 
     try:
+        # Only fetch questions from the latest active checklist version
+        # to avoid duplicates across versions.
+        latest_version_subq = (
+            sa.select(sa.func.max(petition_checklist_questions.c.checklist_version))
+            .where(petition_checklist_questions.c.is_active == sa.true())
+            .scalar_subquery()
+        )
         query = (
             sa.select(*petition_checklist_questions.c)
-            .where(petition_checklist_questions.c.is_active == sa.true())
+            .where(
+                petition_checklist_questions.c.is_active == sa.true(),
+                petition_checklist_questions.c.checklist_version == latest_version_subq,
+            )
             .order_by(
-                petition_checklist_questions.c.checklist_version.desc(),
                 petition_checklist_questions.c.display_order.asc(),
                 petition_checklist_questions.c.category.asc(),
             )

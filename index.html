@@ -926,17 +926,21 @@
     }
     @media (min-width: 768px) {
       .app {
-        grid-template-columns: 200px 1fr;
+        grid-template-columns: var(--sidebar-width, 56px) 1fr;
         grid-template-areas: "topbar topbar" "sidebar main";
+        transition: grid-template-columns 0.2s ease;
+      }
+      .app.sidebar-expanded {
+        --sidebar-width: 200px;
       }
     }
-    .topbar { grid-area: topbar; }
+    .topbar { grid-area: topbar; position: sticky; top: 0; z-index: 200; }
     .sidebar { grid-area: sidebar; }
-    .main { grid-area: main; }
+    .main { grid-area: main; overflow-y: auto; }
 
     /* ── Sidebar ── */
     .sidebar-toggle {
-      display: none;
+      display: inline-flex;
     }
     @media (max-width: 767px) {
       .brand-logo-btn {
@@ -1166,18 +1170,7 @@
       background: color-mix(in srgb, var(--color-surface) 94%, transparent);
       backdrop-filter: blur(10px);
       overflow: hidden;
-    }
-    .sidebar-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: var(--space-4) var(--space-4) var(--space-3);
-      border-bottom: 1px solid var(--color-border);
-    }
-    .sidebar-title {
-      margin: 0;
-      font-size: 0.95rem;
-      font-weight: 600;
+      transition: width 0.2s ease;
     }
     .sidebar-new-btn {
       font-size: 0.8rem;
@@ -1206,10 +1199,12 @@
       transition: color 120ms ease, background 120ms ease;
       width: 100%;
       text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
     }
     .sidebar-nav-item svg {
-      width: 16px;
-      height: 16px;
+      width: 18px;
+      height: 18px;
       stroke: currentColor;
       fill: none;
       stroke-width: 2;
@@ -1238,6 +1233,22 @@
     .sidebar-nav-item.sidebar-new-parse-btn:hover {
       background: var(--color-primary-hover);
       color: var(--color-primary-contrast);
+    }
+    /* Nav label: hidden when collapsed, visible when expanded */
+    .nav-label { transition: opacity 0.15s ease, margin 0.15s ease; }
+    @media (min-width: 768px) {
+      /* Collapsed (default on desktop): icon-only */
+      .sidebar .nav-label { display: none; }
+      .sidebar-nav { padding: var(--space-2) var(--space-1); }
+      .sidebar-nav-item { justify-content: center; padding: 10px 0; }
+      .sidebar-nav-item svg { width: 20px; height: 20px; }
+      .sidebar .sidebar-nav-divider { margin: var(--space-1) var(--space-2); }
+      /* Expanded state */
+      .sidebar-expanded .sidebar .nav-label { display: inline; }
+      .sidebar-expanded .sidebar .sidebar-nav { padding: var(--space-2); }
+      .sidebar-expanded .sidebar-nav-item { justify-content: flex-start; padding: var(--space-2) var(--space-3); }
+      .sidebar-expanded .sidebar-nav-item svg { width: 18px; height: 18px; }
+      .sidebar-expanded .sidebar .sidebar-nav-divider { margin: var(--space-1) var(--space-3); }
     }
     .sidebar-list {
       flex: 1;
@@ -1332,6 +1343,9 @@
       .sidebar.is-open {
         transform: translateX(0);
       }
+      /* On mobile, always show labels when drawer is open */
+      .sidebar .nav-label { opacity: 1; width: auto; }
+      .sidebar-nav-item { justify-content: flex-start; padding: var(--space-2) var(--space-3); }
       .sidebar-overlay {
         display: none;
         position: fixed;
@@ -1352,11 +1366,10 @@
       align-items: center;
       justify-content: space-between;
       gap: var(--space-4);
-      padding: clamp(0.875rem, 1vw + 0.5rem, 1.25rem) clamp(1rem, 2vw + 0.5rem, 2rem);
+      padding: clamp(0.75rem, 1vw + 0.4rem, 1rem) clamp(1rem, 2vw + 0.5rem, 2rem);
       border-bottom: 1px solid var(--color-border);
-      background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+      background: var(--color-surface);
       backdrop-filter: blur(8px);
-      z-index: 200;
     }
     .brand {
       display: flex;
@@ -2090,6 +2103,114 @@
       line-height: 1.45;
       color: var(--color-text-muted);
     }
+
+    /* BNS Applicability Analysis panel */
+    .bns-applicability { display: grid; gap: var(--space-3); }
+    .bns-hero-card {
+      display: grid;
+      gap: var(--space-3);
+      padding: var(--space-4);
+      border: 1px solid color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
+      border-radius: var(--radius-lg);
+      background: linear-gradient(135deg, rgba(15, 118, 110, 0.06), rgba(37, 99, 235, 0.03)), var(--color-surface);
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.06);
+    }
+    .bns-hero-head {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: var(--space-3);
+      align-items: center;
+    }
+    .bns-hero-title {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--color-text);
+    }
+    .bns-hero-fit {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+      color: var(--color-primary);
+    }
+    .bns-hero-rationale {
+      margin: 0;
+      font-size: 0.88rem;
+      line-height: 1.55;
+      color: var(--color-text);
+    }
+    .bns-statutory-text {
+      margin: 0;
+      padding: 0.6rem 0.8rem;
+      border-left: 3px solid var(--color-primary);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+      background: color-mix(in srgb, var(--color-surface-alt) 50%, var(--color-surface));
+      font-size: 0.82rem;
+      font-style: italic;
+      line-height: 1.55;
+      color: var(--color-text-muted);
+    }
+    .bns-ingredient-list {
+      display: grid;
+      gap: 0.3rem;
+    }
+    .bns-ingredient-row {
+      display: grid;
+      grid-template-columns: 1.3rem 1fr 1.5fr;
+      gap: 0.4rem;
+      align-items: baseline;
+      padding: 0.3rem 0.5rem;
+      border-radius: var(--radius-md);
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
+    .bns-ing-ok { background: color-mix(in srgb, #10b981 10%, transparent); }
+    .bns-ing-warn { background: color-mix(in srgb, #f59e0b 10%, transparent); }
+    .bns-ing-miss { background: color-mix(in srgb, #ef4444 10%, transparent); }
+    .bns-ingredient-row .bns-ing-icon { font-size: 0.9rem; text-align: center; }
+    .bns-ingredient-row .bns-ing-name { font-weight: 600; color: var(--color-text); }
+    .bns-ingredient-row .bns-ing-fact { color: var(--color-text-muted); }
+    .bns-secondary-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+    .bns-secondary-detail {
+      flex: 1 1 280px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      background: var(--color-surface);
+    }
+    .bns-secondary-chip {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.5rem 0.75rem;
+      cursor: pointer;
+      font-size: 0.84rem;
+      font-weight: 600;
+      color: var(--color-text);
+      list-style: none;
+    }
+    .bns-secondary-chip::-webkit-details-marker { display: none; }
+    .bns-secondary-chip::before {
+      content: "\25B6";
+      font-size: 0.6rem;
+      transition: transform 0.15s;
+    }
+    .bns-secondary-detail[open] > .bns-secondary-chip::before { transform: rotate(90deg); }
+    .bns-secondary-body {
+      display: grid;
+      gap: var(--space-2);
+      padding: 0 0.75rem 0.75rem;
+      font-size: 0.84rem;
+    }
+
     .result-top-summary {
       display: grid;
       gap: var(--space-3);
@@ -2288,7 +2409,15 @@
     .fullscreen-target.is-fullscreen .preview-shell {
       flex: 1;
       min-height: 0;
-      overflow: auto;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    /* In fullscreen the summary / FIR views must scroll within the shell
+       rather than trying to share flex space (which can collapse to zero). */
+    .fullscreen-target.is-fullscreen .json-output-shell > .summary-view,
+    .fullscreen-target.is-fullscreen .json-output-shell > .result-top-summary {
+      flex: none;
+      overflow: visible;
     }
     .fullscreen-target.is-fullscreen .output-pre,
     .fullscreen-target.is-fullscreen .json-editor,
@@ -4603,12 +4732,32 @@
     .iqw-modal-close { background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--color-text-muted); line-height: 1; }
     .iqw-modal-close:hover { color: var(--color-text); }
     .iqw-modal-body { padding: var(--space-4); }
-    .iqw-modal-body .form-group { margin-bottom: var(--space-3); }
-    .iqw-modal-body .form-group label { display: block; font-size: 0.78rem; font-weight: 600; margin-bottom: 4px; color: var(--color-text-muted); }
+    .iqw-modal-body .form-group { margin-bottom: var(--space-4); }
+    .iqw-modal-body .form-group label {
+      display: block; font-size: 0.78rem; font-weight: 600; margin-bottom: 6px;
+      color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em;
+    }
     .iqw-modal-body .form-group input,
     .iqw-modal-body .form-group select,
-    .iqw-modal-body .form-group textarea { width: 100%; padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-alt); color: var(--color-text); font-size: 0.85rem; font-family: var(--font-body); }
-    .iqw-modal-body .form-group textarea { min-height: 80px; resize: vertical; }
+    .iqw-modal-body .form-group textarea {
+      width: 100%; padding: 10px 14px;
+      border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+      background: var(--color-surface-alt); color: var(--color-text);
+      font-size: 0.88rem; font-family: var(--font-body);
+      transition: border-color 0.2s, box-shadow 0.2s;
+      box-sizing: border-box;
+    }
+    .iqw-modal-body .form-group input:focus,
+    .iqw-modal-body .form-group select:focus,
+    .iqw-modal-body .form-group textarea:focus {
+      outline: none; border-color: var(--color-primary);
+      box-shadow: var(--focus-ring);
+    }
+    .iqw-modal-body .form-group input::placeholder,
+    .iqw-modal-body .form-group textarea::placeholder {
+      color: var(--color-text-muted); opacity: 0.5;
+    }
+    .iqw-modal-body .form-group textarea { min-height: 80px; resize: vertical; line-height: 1.6; }
     .iqw-modal-footer { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-border); display: flex; justify-content: flex-end; gap: var(--space-2); }
     .iqw-form-error { color: var(--color-error); font-size: 0.78rem; margin-top: 2px; }
     .not-found-view {
@@ -4658,13 +4807,19 @@
     .case-ai-panel-row { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
     .case-ai-chip { display: inline-flex; align-items: center; border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 2px var(--space-2); color: var(--color-text); background: var(--color-surface); }
 
-    /* ── Case Intake Form (professional layout) ── */
+    /* ── Shared Form Styles (used across wizard, case intake, QC, modals) ── */
+    .iqw-form .form-group,
     .case-workspace-left .form-group { margin-bottom: var(--space-4); }
+    .iqw-form .form-group label,
     .case-workspace-left .form-group label {
       display: block; font-size: 0.78rem; font-weight: 600; margin-bottom: 6px;
       color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em;
     }
+    .iqw-form .form-group label .required-star,
     .case-workspace-left .form-group label .required-star { color: var(--color-error); margin-left: 2px; }
+    .iqw-form .form-group input,
+    .iqw-form .form-group select,
+    .iqw-form .form-group textarea,
     .case-workspace-left .form-group input,
     .case-workspace-left .form-group select,
     .case-workspace-left .form-group textarea {
@@ -4675,42 +4830,63 @@
       transition: border-color 0.2s, box-shadow 0.2s;
       box-sizing: border-box;
     }
+    .iqw-form .form-group input:focus,
+    .iqw-form .form-group select:focus,
+    .iqw-form .form-group textarea:focus,
     .case-workspace-left .form-group input:focus,
     .case-workspace-left .form-group select:focus,
     .case-workspace-left .form-group textarea:focus {
       outline: none; border-color: var(--color-primary);
       box-shadow: var(--focus-ring);
     }
+    .iqw-form .form-group input:read-only,
     .case-workspace-left .form-group input:read-only {
       opacity: 0.6; cursor: not-allowed;
       background: color-mix(in srgb, var(--color-border) 20%, var(--color-surface-alt));
     }
+    .iqw-form .form-group input::placeholder,
+    .iqw-form .form-group textarea::placeholder,
     .case-workspace-left .form-group input::placeholder,
     .case-workspace-left .form-group textarea::placeholder {
       color: var(--color-text-muted); opacity: 0.5;
     }
+    .iqw-form .form-group textarea,
     .case-workspace-left .form-group textarea { min-height: 100px; resize: vertical; line-height: 1.6; }
+    .iqw-form .form-group small,
     .case-workspace-left .form-group small {
       display: block; margin-top: 4px; font-size: 0.72rem;
       color: var(--color-text-muted); line-height: 1.4;
     }
+    .iqw-form .form-group .iqw-form-error,
     .case-workspace-left .form-group .iqw-form-error {
       margin-top: 4px; font-size: 0.72rem; color: var(--color-error);
     }
+    .iqw-form .form-row,
     .case-workspace-left .form-row {
       display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4);
     }
+    .iqw-form .form-actions,
     .case-workspace-left .form-actions {
       display: flex; gap: var(--space-3); margin-top: var(--space-5);
       padding-top: var(--space-4); border-top: 1px solid var(--color-border);
     }
 
+    /* Step panel section header (title + description for each wizard step) */
+    .wizard-step-header { margin-bottom: var(--space-5); }
+    .wizard-step-header h3 {
+      margin: 0 0 var(--space-1) 0; font-size: 1.05rem; font-weight: 700;
+      color: var(--color-text); line-height: 1.3;
+    }
+    .wizard-step-header p {
+      margin: 0; font-size: 0.82rem; color: var(--color-text-muted); line-height: 1.5;
+    }
+
     /* ── Wizard layout ── */
     .wizard-workspace { display: block; min-height: 420px; }
-    .wizard-form-container { max-width: 680px; margin: 0 auto; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--space-4); }
+    .wizard-form-container { max-width: 640px; margin: 0 auto; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-6) var(--space-6) var(--space-4); box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
 
     /* Wizard stepper (reuses lifecycle-stepper pattern) */
-    .wizard-stepper { display: flex; align-items: center; gap: 0; padding: var(--space-3) var(--space-2); margin-bottom: var(--space-4); }
+    .wizard-stepper { display: flex; align-items: center; gap: 0; padding: var(--space-3) var(--space-4); margin-bottom: var(--space-5); background: var(--color-surface-alt); border-radius: var(--radius-sm); border: 1px solid var(--color-border); }
     .wizard-stepper .lifecycle-step { cursor: default; }
     .wizard-stepper .lifecycle-step.is-completed { cursor: pointer; }
     .wizard-stepper .lifecycle-step.is-completed:hover .lifecycle-step-circle { box-shadow: 0 0 0 3px rgba(37,99,235,0.15); }
@@ -4736,8 +4912,8 @@
     .case-type-card-desc { font-size: 0.75rem; font-weight: 400; color: var(--color-text-muted); }
 
     /* Review card */
-    .wizard-review-card { border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-alt); padding: var(--space-4); margin-bottom: var(--space-4); }
-    .wizard-review-card h4 { margin: 0 0 var(--space-3) 0; font-size: 0.88rem; }
+    .wizard-review-card { border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-alt); padding: var(--space-4) var(--space-5); margin-bottom: var(--space-5); }
+    .wizard-review-card h4 { margin: 0 0 var(--space-3) 0; font-size: 0.88rem; font-weight: 700; color: var(--color-text); }
     .wizard-review-row { display: flex; justify-content: space-between; padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border); font-size: 0.85rem; }
     .wizard-review-row:last-child { border-bottom: none; }
     .wizard-review-label { color: var(--color-text-muted); flex-shrink: 0; margin-right: var(--space-3); }
@@ -4745,8 +4921,9 @@
     .wizard-review-value.is-empty { color: var(--color-text-muted); font-style: italic; font-weight: 400; }
 
     /* Wizard actions */
-    .wizard-actions { display: flex; justify-content: space-between; gap: var(--space-3); margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--color-border); }
+    .wizard-actions { display: flex; justify-content: space-between; gap: var(--space-3); margin-top: var(--space-6); padding-top: var(--space-5); border-top: 1px solid var(--color-border); }
     .wizard-actions-right { display: flex; gap: var(--space-3); }
+    .wizard-actions .btn-primary { min-width: 120px; }
 
     /* Wizard stage guidance */
     .wizard-guidance { margin-top: var(--space-4); }
@@ -4757,12 +4934,14 @@
     /* Responsive wizard */
     @media (max-width: 767px) {
       .case-type-cards { grid-template-columns: 1fr 1fr; }
+      .iqw-form .form-row { grid-template-columns: 1fr; }
     }
     @media (max-width: 639px) {
       .case-type-cards { grid-template-columns: 1fr; }
       .wizard-actions { flex-direction: column; }
       .wizard-actions-right { flex-direction: column; }
       .wizard-form-container { padding: var(--space-3); }
+      .wizard-step-header h3 { font-size: 0.95rem; }
     }
 
     /* ── Split-pane Case Workspace ── */
@@ -5100,42 +5279,39 @@
       </div>
     </header>
     <aside id="sidebar" class="sidebar" aria-label="Navigation">
-      <div class="sidebar-header">
-        <h2 class="sidebar-title">Menu</h2>
-      </div>
       <nav class="sidebar-nav">
-        <button id="navDocumentsBtn" class="sidebar-nav-item is-active" type="button">
+        <button id="navDocumentsBtn" class="sidebar-nav-item is-active" type="button" title="Documents">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          Documents
+          <span class="nav-label">Documents</span>
         </button>
-        <button id="navCompareBtn" class="sidebar-nav-item" type="button">
+        <button id="navCompareBtn" class="sidebar-nav-item" type="button" title="Compare">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="3" width="8" height="18" rx="1"/><rect x="14" y="3" width="8" height="18" rx="1"/><path d="M7 8h-2M7 12h-2M7 16h-2M19 8h-2M19 12h-2M19 16h-2"/></svg>
-          Compare
+          <span class="nav-label">Compare</span>
         </button>
         <div class="sidebar-nav-divider"></div>
-        <button id="navCasesBtn" class="sidebar-nav-item" type="button">
+        <button id="navCasesBtn" class="sidebar-nav-item" type="button" title="Cases">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-          Cases
+          <span class="nav-label">Cases</span>
         </button>
-        <button id="navQualityBtn" class="sidebar-nav-item" type="button">
+        <button id="navQualityBtn" class="sidebar-nav-item" type="button" title="Quality Check">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          Quality Check
+          <span class="nav-label">Quality Check</span>
         </button>
-        <button id="navDocGenBtn" class="sidebar-nav-item" type="button">
+        <button id="navDocGenBtn" class="sidebar-nav-item" type="button" title="Doc Gen">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-          Doc Gen
+          <span class="nav-label">Doc Gen</span>
         </button>
-        <button id="navKnowledgeBtn" class="sidebar-nav-item" type="button">
+        <button id="navKnowledgeBtn" class="sidebar-nav-item" type="button" title="AI Query">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2L9 9l-7 1 5 5-1.5 7L12 18l6.5 4L17 15l5-5-7-1z"/></svg>
-          AI Query
+          <span class="nav-label">AI Query</span>
         </button>
-        <button id="navSeniorDashboardBtn" class="sidebar-nav-item dashboard-only" type="button">
+        <button id="navSeniorDashboardBtn" class="sidebar-nav-item dashboard-only" type="button" title="Dashboard">
           <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="3" y1="20" x2="21" y2="20"/></svg>
-          Dashboard
+          <span class="nav-label">Dashboard</span>
         </button>
-        <button id="navAdminBtn" class="sidebar-nav-item admin-only" type="button">
+        <button id="navAdminBtn" class="sidebar-nav-item admin-only" type="button" title="Admin">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          Admin
+          <span class="nav-label">Admin</span>
         </button>
         <div class="sidebar-nav-spacer"></div>
       </nav>
@@ -5388,12 +5564,16 @@
         </div>
 
         <div class="wizard-workspace">
-          <div class="wizard-form-container">
+          <div class="wizard-form-container iqw-form">
 
             <!-- Panel 1: Complaint Type -->
             <div class="wizard-step-panel is-active" id="wizardPanel1" role="tabpanel" aria-labelledby="wizardStep1Label">
-              <div class="form-group" style="margin-bottom: var(--space-4);">
-                <label id="wizardCaseTypeLabel" style="font-weight:600; margin-bottom: var(--space-2); display:block;">Case Type</label>
+              <div class="wizard-step-header">
+                <h3 data-i18n="wizard.step1Title">Select Complaint Type</h3>
+                <p data-i18n="wizard.step1Desc">Choose the type of case and the police station where it will be registered.</p>
+              </div>
+              <div class="form-group">
+                <label id="wizardCaseTypeLabel">Case Type</label>
                 <div class="case-type-cards" role="radiogroup" aria-labelledby="wizardCaseTypeLabel">
                   <div class="case-type-card" role="radio" aria-checked="true" tabindex="0" data-value="Petition">
                     <div class="case-type-card-icon" aria-hidden="true">
@@ -5417,16 +5597,17 @@
                     <span class="case-type-card-desc">Action initiated by police on own cognizance</span>
                   </div>
                 </div>
-                <!-- Hidden select stays in sync for backward compat -->
-                <select id="cfCaseType" style="display:none;"><option value="Petition">Petition</option><option value="FIR">FIR</option><option value="Suo_Motu">Suo Motu</option></select>
+                <select id="cfCaseType" class="mode-hidden"><option value="Petition">Petition</option><option value="FIR">FIR</option><option value="Suo_Motu">Suo Motu</option></select>
               </div>
-              <div class="form-group">
-                <label for="cfPoliceStation">Police Station <span class="required-star">*</span></label>
-                <select id="cfPoliceStation"><option value="">Select...</option></select>
-              </div>
-              <div class="form-group">
-                <label for="cfRegistrationDate">Registration Date</label>
-                <input id="cfRegistrationDate" type="date" readonly>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="cfPoliceStation">Police Station <span class="required-star">*</span></label>
+                  <select id="cfPoliceStation"><option value="">Select...</option></select>
+                </div>
+                <div class="form-group">
+                  <label for="cfRegistrationDate">Registration Date</label>
+                  <input id="cfRegistrationDate" type="date" readonly>
+                </div>
               </div>
               <div class="wizard-actions">
                 <button id="caseFormCancelBtn" class="btn btn-secondary" type="button">Cancel</button>
@@ -5438,14 +5619,19 @@
 
             <!-- Panel 2: Classification & Facts -->
             <div class="wizard-step-panel" id="wizardPanel2" role="tabpanel" aria-labelledby="wizardStep2Label">
+              <div class="wizard-step-header">
+                <h3 data-i18n="wizard.step2Title">Classification &amp; Facts</h3>
+                <p data-i18n="wizard.step2Desc">Specify the offence type and provide a brief summary of the facts.</p>
+              </div>
               <div class="form-group">
                 <label for="cfOffenceType">Offence Type</label>
                 <input id="cfOffenceType" type="text" placeholder="Search offence type..." list="cfOffenceTypeList" autocomplete="off">
                 <datalist id="cfOffenceTypeList"></datalist>
+                <small>Start typing to search from the offence type catalogue.</small>
               </div>
               <div class="form-group">
-                <label for="cfBriefFacts">Brief Facts</label>
-                <textarea id="cfBriefFacts" placeholder="Enter brief facts..." rows="6"></textarea>
+                <label for="cfBriefFacts">Brief Facts <span class="required-star">*</span></label>
+                <textarea id="cfBriefFacts" placeholder="Enter brief facts of the complaint..." rows="6"></textarea>
               </div>
               <div class="wizard-actions">
                 <button id="wizardBackBtn2" class="btn btn-secondary" type="button" data-i18n="wizard.back">Back</button>
@@ -5457,6 +5643,10 @@
 
             <!-- Panel 3: Review & Register -->
             <div class="wizard-step-panel" id="wizardPanel3" role="tabpanel" aria-labelledby="wizardStep3Label">
+              <div class="wizard-step-header">
+                <h3 data-i18n="wizard.step3Title">Review &amp; Register</h3>
+                <p data-i18n="wizard.step3Desc">Verify the details below and register the case. Numbers are auto-generated.</p>
+              </div>
               <div id="wizardReviewCard" class="wizard-review-card"></div>
               <div class="form-row">
                 <div class="form-group" id="cfCrimeNoGroup">
@@ -5620,23 +5810,25 @@
         <div class="iqw-view-header">
           <h2>Quality Check</h2>
         </div>
-        <div class="qc-form">
+        <div class="qc-form iqw-form">
           <div class="form-group">
             <label for="qcDocType">Document Type</label>
-            <select id="qcDocType" class="iqw-select"><option value="FIR">FIR</option><option value="Complaint">Complaint</option><option value="Chargesheet">Chargesheet</option><option value="Statement">Statement</option><option value="Generic">Generic</option></select>
+            <select id="qcDocType"><option value="FIR">FIR</option><option value="Complaint">Complaint</option><option value="Chargesheet">Chargesheet</option><option value="Statement">Statement</option><option value="Generic">Generic</option></select>
           </div>
           <div class="form-group">
-            <label for="qcOffenceType">Offence Type (optional)</label>
-            <input id="qcOffenceType" class="iqw-search-input input-full" type="text" placeholder="e.g. Theft, Murder...">
+            <label for="qcOffenceType">Offence Type <small style="text-transform:none; font-weight:400; letter-spacing:0;">(optional)</small></label>
+            <input id="qcOffenceType" type="text" placeholder="e.g. Theft, Murder...">
           </div>
           <div class="form-group">
             <label for="qcText">Document Text</label>
-            <textarea id="qcText" class="qc-textarea" placeholder="Paste document text here..."></textarea>
+            <textarea id="qcText" placeholder="Paste document text here..." rows="8"></textarea>
           </div>
-          <button id="qcRunBtn" class="btn btn-primary" type="button">
-            <span class="spinner" aria-hidden="true"></span>
-            <span class="btn-label">Run Quality Check</span>
-          </button>
+          <div class="form-actions" style="border-top:none; margin-top: var(--space-3); padding-top:0;">
+            <button id="qcRunBtn" class="btn btn-primary" type="button">
+              <span class="spinner" aria-hidden="true"></span>
+              <span class="btn-label">Run Quality Check</span>
+            </button>
+          </div>
         </div>
         <div id="qcResults" class="qc-results mode-hidden"></div>
       </section>
@@ -10047,6 +10239,120 @@
       });
     }
 
+    /* ── BNS Applicability Analysis panel ────────────────────── */
+
+    function buildIngredientMappingHtml(mapping) {
+      if (!Array.isArray(mapping) || !mapping.length) return "";
+      var rows = mapping.map(function(m) {
+        var status = (m.status || "missing").toLowerCase();
+        var cls = status === "satisfied" ? "bns-ing-ok" : status === "uncertain" ? "bns-ing-warn" : "bns-ing-miss";
+        var icon = status === "satisfied" ? "\u2713" : status === "uncertain" ? "?" : "\u2717";
+        return "" +
+          "<div class='bns-ingredient-row " + cls + "'>" +
+            "<span class='bns-ing-icon'>" + icon + "</span>" +
+            "<span class='bns-ing-name'>" + escapeHtml(m.ingredient || "-") + "</span>" +
+            "<span class='bns-ing-fact'>" + escapeHtml(m.complaint_fact || "-") + "</span>" +
+          "</div>";
+      }).join("");
+      return "<div class='bns-ingredient-list'>" + rows + "</div>";
+    }
+
+    function buildMostApplicableSectionHtml(section) {
+      if (!section || typeof section !== "object") return "";
+      var score = section.confidence_score;
+      var ringHtml = buildScoreRingHtml(score, "Confidence");
+      var fitLabel = (section.fit || "primary").charAt(0).toUpperCase() + (section.fit || "primary").slice(1);
+      var statutoryHtml = section.statutory_text
+        ? "<blockquote class='bns-statutory-text'>" + escapeHtml(section.statutory_text) + "</blockquote>"
+        : "";
+      var ingredientHtml = buildIngredientMappingHtml(section.ingredient_mapping);
+      var detailsHtml = "";
+      if (ingredientHtml) {
+        detailsHtml = "" +
+          "<details>" +
+            "<summary style='cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--color-text-muted)'>Ingredient Mapping</summary>" +
+            ingredientHtml +
+          "</details>";
+      }
+      var reviewHtml = section.review_note
+        ? "<p class='summary-card-note'>" + escapeHtml(section.review_note) + "</p>"
+        : "";
+      return "" +
+        "<div class='bns-hero-card'>" +
+          "<div class='bns-hero-head'>" +
+            ringHtml +
+            "<div>" +
+              "<p class='bns-hero-title'>BNS " + escapeHtml(section.section || "?") + " \u2014 " + escapeHtml(section.title || "Section") + "</p>" +
+              "<span class='bns-hero-fit'>" + escapeHtml(fitLabel) + " match</span>" +
+            "</div>" +
+          "</div>" +
+          "<p class='bns-hero-rationale'>" + escapeHtml(section.rationale || "-") + "</p>" +
+          statutoryHtml +
+          detailsHtml +
+          reviewHtml +
+        "</div>";
+    }
+
+    function buildSecondarySectionsHtml(sections) {
+      if (!Array.isArray(sections) || !sections.length) return "";
+      var chips = sections.map(function(s) {
+        var confLabel = s.confidence || "";
+        var statutoryHtml = s.statutory_text
+          ? "<blockquote class='bns-statutory-text'>" + escapeHtml(s.statutory_text) + "</blockquote>"
+          : "";
+        var ingredientHtml = buildIngredientMappingHtml(s.ingredient_mapping);
+        var reviewHtml = s.review_note
+          ? "<p class='summary-card-note'>" + escapeHtml(s.review_note) + "</p>"
+          : "";
+        return "" +
+          "<details class='bns-secondary-detail'>" +
+            "<summary class='bns-secondary-chip'>" +
+              "BNS " + escapeHtml(s.section || "?") + " \u2014 " + escapeHtml(s.title || "Section") +
+              (confLabel ? " (" + escapeHtml(confLabel) + ")" : "") +
+            "</summary>" +
+            "<div class='bns-secondary-body'>" +
+              "<p style='margin:0;color:var(--color-text)'>" + escapeHtml(s.rationale || "-") + "</p>" +
+              statutoryHtml +
+              ingredientHtml +
+              reviewHtml +
+            "</div>" +
+          "</details>";
+      }).join("");
+      return "<div class='bns-secondary-wrap'>" + chips + "</div>";
+    }
+
+    function buildBnsApplicabilityHtml(parsedOutput) {
+      var fir = getFirDraft(parsedOutput);
+      var sections = fir && Array.isArray(fir.proposed_bns_sections)
+        ? fir.proposed_bns_sections.slice()
+        : [];
+      if (!sections.length) return "";
+      // Sort: by applicability_rank if present, else confidence_score descending
+      sections.sort(function(a, b) {
+        var ra = a.applicability_rank, rb = b.applicability_rank;
+        if (ra && rb) return ra - rb;
+        if (ra) return -1;
+        if (rb) return 1;
+        return (b.confidence_score || 0) - (a.confidence_score || 0);
+      });
+      var heroSection = sections[0];
+      var secondary = sections.slice(1);
+      return "" +
+        "<section class='summary-section span-full bns-applicability'>" +
+          "<p class='summary-section-label'>BNS Applicability Analysis</p>" +
+          buildMostApplicableSectionHtml(heroSection) +
+          (secondary.length
+            ? "<p class='summary-card-note' style='margin-top:0.2rem'>" + secondary.length + " additional section" + (secondary.length > 1 ? "s" : "") + "</p>"
+            : ""
+          ) +
+          buildSecondarySectionsHtml(secondary) +
+          (fir.disclaimer
+            ? "<p class='summary-card-note'>" + escapeHtml(fir.disclaimer) + "</p>"
+            : ""
+          ) +
+        "</section>";
+    }
+
     function buildFirDraftSectionHtml(parsedOutput) {
       const fir = getFirDraft(parsedOutput);
       if (!Object.keys(fir).length) {
@@ -10076,13 +10382,8 @@
             { label: "Informant", value: informant.name || "-" },
             { label: "Accused", value: parties.accused || "-" }
           ]) +
+          buildBnsApplicabilityHtml(parsedOutput) +
           "<div class='summary-card-stack'>" +
-            buildSummaryCardHtml(
-              "Primary BNS Sections",
-              renderTokenListHtml(primarySections, "None"),
-              fir.disclaimer || "",
-              ""
-            ) +
             buildSummaryCardHtml(
               "Property / Loss",
               "<p class='summary-card-value'>" + escapeHtml(caseProfile.property_or_loss || "Not stated") + "</p>",
@@ -10421,9 +10722,13 @@
         );
       }
       if (primaryBns.length) {
+        var bnsPillText = primaryBns[0];
+        if (primaryBns.length > 1) {
+          bnsPillText += " +" + (primaryBns.length - 1) + " more";
+        }
         metaPills.push(
           "<span class='result-top-summary-pill'><strong>BNS:</strong> " +
-          escapeHtml(primaryBns.slice(0, 2).join("; ")) + "</span>"
+          escapeHtml(bnsPillText) + "</span>"
         );
       }
       if (checklist && typeof checklist === "object" && checklist.status) {
@@ -10690,7 +10995,7 @@
         "</section>";
 
       return "<div class='summary-dashboard'>" +
-        heroHtml + scoresHtml + buildChecklistReadinessHtml(payload) + fieldsHtml +
+        heroHtml + scoresHtml + buildChecklistReadinessHtml(payload) + buildBnsApplicabilityHtml(payload) + fieldsHtml +
       "</div>";
     }
 
@@ -11208,16 +11513,29 @@
     }
 
     /* ── Sidebar Logic ── */
+    var appShellEl = document.getElementById("appShell");
     function openSidebar() {
-      sidebarEl.classList.add("is-open");
-      sidebarOverlay.classList.add("is-visible");
+      if (window.innerWidth >= 768) {
+        appShellEl.classList.add("sidebar-expanded");
+      } else {
+        sidebarEl.classList.add("is-open");
+        sidebarOverlay.classList.add("is-visible");
+      }
     }
     function closeSidebar() {
-      sidebarEl.classList.remove("is-open");
-      sidebarOverlay.classList.remove("is-visible");
+      if (window.innerWidth >= 768) {
+        appShellEl.classList.remove("sidebar-expanded");
+      } else {
+        sidebarEl.classList.remove("is-open");
+        sidebarOverlay.classList.remove("is-visible");
+      }
     }
     function toggleSidebar() {
-      sidebarEl.classList.contains("is-open") ? closeSidebar() : openSidebar();
+      if (window.innerWidth >= 768) {
+        appShellEl.classList.toggle("sidebar-expanded");
+      } else {
+        sidebarEl.classList.contains("is-open") ? closeSidebar() : openSidebar();
+      }
     }
 
     function refreshHistoryList() {
@@ -12416,7 +12734,7 @@
 
     sidebarToggle.addEventListener("click", toggleSidebar);
     document.getElementById("brandLogoToggle").addEventListener("click", function() {
-      if (window.innerWidth < 768) toggleSidebar();
+      toggleSidebar();
     });
     sidebarOverlay.addEventListener("click", closeSidebar);
     function startNewParse() {

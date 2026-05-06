@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from complaint_parsing import (
+    _build_who_payload_from_question_answer,
     _clean_refined_translation_output,
     _clean_ocr_noise,
     _detect_language,
@@ -976,6 +977,18 @@ class ComplaintParsingTests(unittest.TestCase):
         self.assertIn("331", sections)
         self.assertIn("cash and gold ornaments", (fir_draft["case_profile"]["property_or_loss"] or "").lower())
 
+    def test_bns_sections_include_statutory_text(self) -> None:
+        result = parse_document(CALIBRATION_COMPLAINT_1)
+        fir_draft = result["fir_draft"]
+        section_items = fir_draft["proposed_bns_sections"]
+        # All heuristic sections for house theft should have statutory_text
+        for item in section_items:
+            self.assertIn("statutory_text", item, f"Section {item['section']} missing statutory_text")
+            self.assertTrue(
+                item["statutory_text"],
+                f"Section {item['section']} has empty statutory_text",
+            )
+
     def test_builds_fir_draft_with_cheating_sections_for_cyber_fraud(self) -> None:
         sample = """
         I, Sunita Reddy, received a phone call on 10-03-2026 from someone claiming to be an SBI bank officer.
@@ -1553,6 +1566,44 @@ class TestDualLanguageExtraction(unittest.TestCase):
             where_validation,
             "Hindi evidence should not be rejected — combined_source_text includes original",
         )
+
+
+class TestWhoComponentConfidence(unittest.TestCase):
+    """Verify per-component confidence is not downgraded by field-level LLM confidence."""
+
+    def test_who_component_confidence_not_overwritten_by_field_level(self):
+        """Named complainant (0.86) should not be downgraded by 'medium' (0.68)."""
+        answer = {
+            "complainant": ["P. Naresh, son of Veerasomulu"],
+            "victim": ["P. Naresh"],
+            "accused": [],
+            "witnesses": [],
+            "confidence": "medium",  # Field-level: 0.68 (below 0.72 threshold)
+            "evidence": ["I, P. Naresh..."],
+        }
+        fallback = {}
+        result = _build_who_payload_from_question_answer(answer, fallback)
+        complainant = result["components"]["complainant"]
+        # Complainant has strong component score (0.86) — should NOT be downgraded
+        self.assertEqual(complainant["status"], "present")
+        self.assertGreaterEqual(complainant["confidence_score"], 0.72)
+
+    def test_weak_component_not_boosted_above_llm(self):
+        """Inferred component (0.55) should take the higher LLM score when available."""
+        answer = {
+            "complainant": [],
+            "victim": ["some person"],
+            "accused": [],
+            "witnesses": [],
+            "confidence": "high",  # Field-level: 0.88
+            "evidence": [],
+        }
+        fallback = {}
+        result = _build_who_payload_from_question_answer(answer, fallback)
+        victim = result["components"]["victim"]
+        # Generic-only victim gets 0.60 component score; LLM "high" gives 0.88
+        # max(0.60, 0.88) = 0.88 — boosted
+        self.assertEqual(victim["confidence_score"], 0.88)
 
 
 if __name__ == "__main__":

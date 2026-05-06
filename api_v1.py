@@ -9,7 +9,7 @@ from collections import defaultdict
 from enum import Enum
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -3399,6 +3399,279 @@ async def batch_section_recommendation_endpoint(
         dry_run=dry_run,
         user_id=current_user["sub"],
     )
+
+
+@admin_router.post("/parse:batch-reparse")
+async def batch_reparse_endpoint(
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user: dict = Depends(require_role("System_Admin")),
+) -> dict:
+    """Re-run the full OCR + parse pipeline on existing parse records.
+
+    Retrieves original files from object storage, re-processes through
+    Document AI OCR, re-parses, and updates records in-place. Useful after
+    parser logic changes (e.g. confidence scoring fixes).
+    """
+    import logging
+
+    from app import (
+        _detect_mime_type,
+        _extract_completeness_score,
+        enrich_parsed_output_with_checklist,
+        get_doc_ai_config,
+    )
+    from complaint_parsing import parse_document, process_document_bytes
+    from external_interfaces import get_object_bytes
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        config = get_doc_ai_config()
+    except RuntimeError as exc:
+        raise_api_error(ErrorCode.SERVER_ERROR, f"Document AI configuration unavailable: {exc}")
+
+    engine = await get_engine()
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                select(
+                    parse_records.c.id,
+                    parse_records.c.file_name,
+                    parse_records.c.file_storage_uri,
+                )
+                .where(parse_records.c.file_storage_uri.isnot(None))
+                .order_by(parse_records.c.created_at.asc())
+                .limit(limit)
+            )
+        ).fetchall()
+
+    total = len(rows)
+    reparsed = 0
+    errors: list[dict] = []
+
+    for row in rows:
+        record_id = row[0]
+        file_name = row[1]
+        file_storage_uri = row[2]
+        try:
+            # Retrieve original file
+            content = await get_object_bytes(file_storage_uri)
+
+            # Detect MIME type from filename
+            detected_mime = _detect_mime_type(file_name, "")
+            if not detected_mime:
+                detected_mime = "application/pdf"
+
+            # OCR via Document AI
+            ocr_result = await asyncio.to_thread(
+                process_document_bytes,
+                project_id=str(config["DOC_AI_PROJECT_ID"]),
+                location=str(config["DOC_AI_LOCATION"]),
+                processor_id=str(config["DOC_AI_PROCESSOR_ID"]),
+                content=content,
+                mime_type=detected_mime,
+                field_mask=config["DOC_AI_FIELD_MASK"],
+                credentials=config.get("_credentials"),
+            )
+            raw_text = ocr_result.document.text or ""
+
+            # Parse
+            parsed_output = await asyncio.to_thread(parse_document, raw_text)
+
+            # Enrich with checklist
+            parsed_output = await enrich_parsed_output_with_checklist(parsed_output)
+
+            # Extract metadata
+            detected_format = (
+                parsed_output.get("meta", {}).get("detected_format")
+                if isinstance(parsed_output, dict)
+                else None
+            ) or "UNKNOWN"
+            completeness = _extract_completeness_score(parsed_output)
+
+            # Update record in-place
+            async with engine.begin() as conn:
+                await conn.execute(
+                    parse_records.update()
+                    .where(parse_records.c.id == record_id)
+                    .values(
+                        parsed_output=parsed_output,
+                        completeness_score=completeness,
+                        document_format=detected_format,
+                        kis_index_status="pending",
+                    )
+                )
+
+            reparsed += 1
+        except Exception as exc:
+            logger.warning("batch-reparse failed for record %s: %s", record_id, exc, exc_info=True)
+            errors.append({"id": record_id, "error": str(exc)})
+
+    return {
+        "total": total,
+        "reparsed": reparsed,
+        "failed": len(errors),
+        "errors": errors,
+    }
+
+
+@admin_router.post("/parse:batch-re-enrich-checklist")
+async def batch_re_enrich_checklist_endpoint(
+    limit: int = Query(default=500, ge=1, le=2000),
+    current_user: dict = Depends(require_role("System_Admin")),
+) -> dict:
+    """Re-run checklist enrichment on existing parse records.
+
+    Lightweight alternative to batch-reparse: does not re-OCR or re-parse,
+    just re-evaluates the checklist against the existing parsed_output.
+    Use after checklist question fixes (e.g. duplicate removal).
+    """
+    import logging
+
+    from app import _extract_completeness_score, enrich_parsed_output_with_checklist
+
+    logger = logging.getLogger(__name__)
+
+    engine = await get_engine()
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                select(
+                    parse_records.c.id,
+                    parse_records.c.parsed_output,
+                )
+                .where(parse_records.c.parsed_output.isnot(None))
+                .order_by(parse_records.c.created_at.asc())
+                .limit(limit)
+            )
+        ).fetchall()
+
+    total = len(rows)
+    enriched_count = 0
+    errors: list[dict] = []
+
+    for row in rows:
+        record_id = row[0]
+        parsed_output = row[1]
+        try:
+            if not isinstance(parsed_output, dict):
+                continue
+
+            updated = await enrich_parsed_output_with_checklist(parsed_output)
+            completeness = _extract_completeness_score(updated)
+
+            async with engine.begin() as conn:
+                await conn.execute(
+                    parse_records.update()
+                    .where(parse_records.c.id == record_id)
+                    .values(
+                        parsed_output=updated,
+                        completeness_score=completeness,
+                    )
+                )
+            enriched_count += 1
+        except Exception as exc:
+            logger.warning("batch-re-enrich failed for record %s: %s", record_id, exc, exc_info=True)
+            errors.append({"id": record_id, "error": str(exc)})
+
+    return {
+        "total": total,
+        "enriched": enriched_count,
+        "failed": len(errors),
+        "errors": errors,
+    }
+
+
+@admin_router.post("/parse:batch-enrich-bns")
+async def batch_enrich_bns_endpoint(
+    limit: int = Query(default=500, ge=1, le=2000),
+    current_user: dict = Depends(require_role("System_Admin")),
+) -> dict:
+    """Backfill statutory_text and applicability_rank on existing BNS sections.
+
+    Lightweight pass: reads each parse record's proposed_bns_sections,
+    adds statutory_text from the built-in BNS_STATUTORY_TEXTS dict, and
+    assigns applicability_rank by confidence_score descending.
+    """
+    import logging
+
+    from complaint_parsing import BNS_STATUTORY_TEXTS
+
+    logger = logging.getLogger(__name__)
+
+    engine = await get_engine()
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                select(
+                    parse_records.c.id,
+                    parse_records.c.parsed_output,
+                )
+                .where(parse_records.c.parsed_output.isnot(None))
+                .order_by(parse_records.c.created_at.asc())
+                .limit(limit)
+            )
+        ).fetchall()
+
+    total = len(rows)
+    enriched_count = 0
+    skipped_count = 0
+    errors: list[dict] = []
+
+    for row in rows:
+        record_id = row[0]
+        parsed_output = row[1]
+        try:
+            if not isinstance(parsed_output, dict):
+                skipped_count += 1
+                continue
+            fir_draft = parsed_output.get("fir_draft")
+            if not isinstance(fir_draft, dict):
+                skipped_count += 1
+                continue
+            sections = fir_draft.get("proposed_bns_sections")
+            if not isinstance(sections, list) or not sections:
+                skipped_count += 1
+                continue
+
+            changed = False
+            # Sort by confidence descending and assign ranks
+            ranked = sorted(sections, key=lambda s: -(float(s.get("confidence_score") or 0)))
+            for idx, section in enumerate(ranked):
+                if not section.get("applicability_rank"):
+                    section["applicability_rank"] = idx + 1
+                    changed = True
+                if not section.get("statutory_text"):
+                    base_code = (section.get("section") or "").split("(")[0]
+                    text = BNS_STATUTORY_TEXTS.get(base_code)
+                    if text:
+                        section["statutory_text"] = text
+                        changed = True
+                section.setdefault("ingredient_mapping", [])
+
+            if not changed:
+                skipped_count += 1
+                continue
+
+            fir_draft["proposed_bns_sections"] = sections
+            async with engine.begin() as conn:
+                await conn.execute(
+                    parse_records.update()
+                    .where(parse_records.c.id == record_id)
+                    .values(parsed_output=parsed_output)
+                )
+            enriched_count += 1
+        except Exception as exc:
+            logger.warning("batch-enrich-bns failed for record %s: %s", record_id, exc, exc_info=True)
+            errors.append({"id": record_id, "error": str(exc)})
+
+    return {
+        "total": total,
+        "enriched": enriched_count,
+        "skipped": skipped_count,
+        "failed": len(errors),
+        "errors": errors,
+    }
 
 
 @v1_router.get("/health")

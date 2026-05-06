@@ -107,12 +107,26 @@ def _stub_section_recommendations(_text: str, _show_all: bool = False) -> dict:
     }
 
 
+def _normalize_enhanced_fields(data: dict) -> None:
+    """Auto-assign applicability_rank and ensure enhanced field defaults."""
+    for group_key in ("primary_sections", "alternative_sections"):
+        items = data.get(group_key, [])
+        if items and not any(item.get("applicability_rank") for item in items):
+            ranked = sorted(items, key=lambda x: -(float(x.get("confidence_score") or 0)))
+            for idx, item in enumerate(ranked):
+                item["applicability_rank"] = idx + 1
+        for item in items:
+            item.setdefault("statutory_text", None)
+            item.setdefault("ingredient_mapping", [])
+
+
 def recommend_sections_from_text(text: str, show_all: bool = False) -> dict:
     try:
         from kis_client import KISClientError, KISUnavailable, recommend_sections_via_kis
 
         kis_result = recommend_sections_via_kis(text, show_all=show_all)
         if kis_result is not None:
+            _normalize_enhanced_fields(kis_result)
             return kis_result
     except (KISClientError, KISUnavailable):
         import os
@@ -125,6 +139,11 @@ def recommend_sections_from_text(text: str, show_all: bool = False) -> dict:
         "Return JSON only. Recommend BNS/IPC sections from complaint text. "
         "Every recommendation must include confidence_score 0.0-1.0, legal_reasoning, "
         "supporting_ingredients, missing_ingredients, and alternatives. "
+        "Additionally, for each section provide: "
+        "applicability_rank (1 = most applicable, 2 = next, etc.), "
+        "statutory_text (a brief extract of the BNS section definition text), and "
+        "ingredient_mapping (array of objects with keys: ingredient, status "
+        "(one of 'satisfied', 'uncertain', 'missing'), and complaint_fact). "
         "Do not fabricate facts; use only the supplied text."
     )
     schema_request = {
@@ -140,6 +159,11 @@ def recommend_sections_from_text(text: str, show_all: bool = False) -> dict:
                     "legal_reasoning": "string",
                     "supporting_ingredients": ["string"],
                     "missing_ingredients": ["string"],
+                    "applicability_rank": 1,
+                    "statutory_text": "string (brief extract of BNS section definition)",
+                    "ingredient_mapping": [
+                        {"ingredient": "string", "status": "satisfied|uncertain|missing", "complaint_fact": "string"}
+                    ],
                 }
             ],
             "alternative_sections": [],
@@ -158,6 +182,7 @@ def recommend_sections_from_text(text: str, show_all: bool = False) -> dict:
         data["alternative_sections"] = [
             item for item in data.get("alternative_sections", []) if float(item.get("confidence_score") or 0) >= 0.30
         ]
+    _normalize_enhanced_fields(data)
     data["disclaimer"] = SECTION_DISCLAIMER
     data["model_name"] = f"{meta['provider']}:{meta['model']}"
     data["llm_provider"] = meta["provider"]
@@ -206,6 +231,9 @@ async def persist_section_recommendation(
                     is_primary=is_primary,
                     is_alternative=is_alt,
                     disclaimer_text=SECTION_DISCLAIMER,
+                    applicability_rank=item.get("applicability_rank"),
+                    statutory_text=item.get("statutory_text"),
+                    ingredient_mapping=item.get("ingredient_mapping"),
                     created_by=user_id,
                 )
             )
@@ -240,6 +268,9 @@ def _kis_section_to_bns_payload(item: dict, *, fit: str = "primary") -> dict:
             if item.get("missing_ingredients")
             else None
         ),
+        "applicability_rank": item.get("applicability_rank"),
+        "statutory_text": item.get("statutory_text") or None,
+        "ingredient_mapping": item.get("ingredient_mapping") or [],
         "source": "kis",
     }
 

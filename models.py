@@ -726,6 +726,9 @@ class SectionRecommendation(AuditMixin, Base):
         sa.Boolean, default=False, nullable=False,
     )
     disclaimer_text: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    applicability_rank: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
+    statutory_text: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    ingredient_mapping: Mapped[Optional[list]] = mapped_column(sa.JSON, nullable=True)
 
     # relationships
     analysis: Mapped[AIAnalysisResult] = relationship(

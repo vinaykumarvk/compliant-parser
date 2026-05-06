@@ -3683,10 +3683,12 @@ def _build_who_payload_from_question_answer(
         inferred = bool(fallback_component.get("inferred")) if isinstance(fallback_component, dict) else False
         component = _build_component_payload(merged_values, inferred=inferred)
         if component["status"] != "missing":
-            component["confidence_score"] = _confidence_label_to_score(
+            component_score = component.get("confidence_score", 0.0)
+            llm_score = _confidence_label_to_score(
                 answer.get("confidence"),
-                component.get("confidence_score", 0.0),
+                component_score,
             )
+            component["confidence_score"] = max(component_score, llm_score)
             if component["status"] == "present" and component["confidence_score"] < 0.72:
                 component["status"] = "uncertain"
         components[role] = component
@@ -5045,6 +5047,82 @@ def _extract_preferred_informant_name(
     return None
 
 
+BNS_STATUTORY_TEXTS: dict[str, str] = {
+    "115": (
+        "Whoever does any act with the intention of thereby causing hurt to any person, "
+        "or with the knowledge that he is likely thereby to cause hurt to any person, "
+        "and does thereby cause hurt to any person, is said voluntarily to cause hurt."
+    ),
+    "117": (
+        "Whoever voluntarily causes hurt, if the hurt which he intends to cause or knows "
+        "himself to be likely to cause is grievous hurt, and if the hurt which he causes "
+        "is grievous hurt, is said voluntarily to cause grievous hurt."
+    ),
+    "118": (
+        "Whoever voluntarily causes hurt by means of any instrument for shooting, stabbing "
+        "or cutting, or any instrument which, used as a weapon of offence, is likely to "
+        "cause death, or by means of fire or any heated substance, or by any poison or "
+        "corrosive substance, or by any explosive substance, or by any substance which is "
+        "deleterious to the human body to inhale, to swallow, or to receive into the blood."
+    ),
+    "125": (
+        "Whoever does any act so rashly or negligently as to endanger human life or the "
+        "personal safety of others, shall be punished — (a) in case of hurt, (b) in case "
+        "of grievous hurt."
+    ),
+    "281": (
+        "Whoever drives any vehicle, or rides, on any public way in a manner so rash or "
+        "negligent as to endanger human life, or to be likely to cause hurt or injury to "
+        "any other person."
+    ),
+    "303": (
+        "Whoever, intending to take dishonestly any movable property out of the possession "
+        "of any person without that person's consent, moves that property in order to such "
+        "taking, is said to commit theft."
+    ),
+    "304": (
+        "Whoever, commits theft by snatching any property or article from any person, "
+        "is said to commit snatching."
+    ),
+    "305": (
+        "Whoever commits theft in any building, tent or vessel, which building, tent or "
+        "vessel is used as a human dwelling, or used for the custody of property, or in "
+        "any means of transportation."
+    ),
+    "309": (
+        "Theft is robbery if, in order to the committing of the theft, or in committing "
+        "the theft, or in carrying away or attempting to carry away property obtained by "
+        "the theft, the offender voluntarily causes or attempts to cause death, hurt or "
+        "wrongful restraint, or fear of instant death, instant hurt or instant wrongful restraint."
+    ),
+    "318": (
+        "Whoever, by deceiving any person, fraudulently or dishonestly induces the person "
+        "so deceived to deliver any property to any person, or to consent that any person "
+        "shall retain any property, or intentionally induces the person so deceived to do "
+        "or omit to do anything, is said to cheat."
+    ),
+    "319": (
+        "Whoever cheats by pretending to be some other person, or by knowingly substituting "
+        "one person for another, or representing that he or any other person is a person "
+        "other than he or such other person really is."
+    ),
+    "326": (
+        "Whoever commits mischief by fire or any explosive substance, intending to cause, "
+        "or knowing it to be likely that he will thereby cause, damage to any property."
+    ),
+    "331": (
+        "Whoever commits house-trespass or house-breaking shall be punished with "
+        "imprisonment which may extend to two years, and shall also be liable to fine."
+    ),
+    "351": (
+        "Whoever threatens another with any injury to his person, reputation or property, "
+        "or to the person or reputation of any one in whom that person is interested, "
+        "with intent to cause alarm to that person, or to cause that person to do any act "
+        "which he is not legally bound to do, commits criminal intimidation."
+    ),
+}
+
+
 def _build_bns_section_payload(
     section: str,
     title: str,
@@ -5055,8 +5133,13 @@ def _build_bns_section_payload(
     *,
     fit: str = "primary",
     review_note: Optional[str] = None,
+    statutory_text: Optional[str] = None,
+    ingredient_mapping: Optional[list[dict[str, str]]] = None,
 ) -> dict[str, Any]:
     score = round(max(0.0, min(1.0, confidence_score)), 2)
+    # Look up statutory text from built-in dict if not explicitly provided
+    base_code = section.split("(")[0]
+    resolved_text = statutory_text or BNS_STATUTORY_TEXTS.get(base_code)
     payload = {
         "section": section,
         "title": title,
@@ -5073,6 +5156,10 @@ def _build_bns_section_payload(
     }
     if review_note:
         payload["review_note"] = _clean_extracted_value(review_note)
+    if resolved_text:
+        payload["statutory_text"] = resolved_text
+    if ingredient_mapping:
+        payload["ingredient_mapping"] = ingredient_mapping
     return payload
 
 

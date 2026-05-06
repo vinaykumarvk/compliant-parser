@@ -51,6 +51,24 @@ BNS_MAPPING_RESPONSE_SCHEMA: dict[str, Any] = {
                             "required": ["source", "title", "reference_id"],
                         },
                     },
+                    "applicability_rank": {"type": "integer"},
+                    "statutory_text": {"type": "string"},
+                    "ingredient_mapping": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "ingredient": {"type": "string"},
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["satisfied", "uncertain", "missing"],
+                                },
+                                "complaint_fact": {"type": "string"},
+                            },
+                            "required": ["ingredient", "status", "complaint_fact"],
+                        },
+                    },
                 },
                 "required": [
                     "section_code",
@@ -171,7 +189,7 @@ def _coerce_section_mapping(item: Any) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         confidence_score = 0.0
     citations = item.get("citations") if isinstance(item.get("citations"), list) else []
-    return {
+    coerced: dict[str, Any] = {
         "section_code": section_code,
         "section_title": str(item.get("section_title") or item.get("title") or item.get("offence") or section_code),
         "act_name": str(item.get("act_name") or item.get("act") or "BNS"),
@@ -181,6 +199,17 @@ def _coerce_section_mapping(item: Any) -> dict[str, Any] | None:
         "missing_ingredients": _string_list(item.get("missing_ingredients")),
         "citations": citations,
     }
+    # Pass through enhanced fields when present (optional, backward-compatible)
+    if item.get("applicability_rank") is not None:
+        try:
+            coerced["applicability_rank"] = int(item["applicability_rank"])
+        except (TypeError, ValueError):
+            pass
+    if item.get("statutory_text"):
+        coerced["statutory_text"] = str(item["statutory_text"])
+    if isinstance(item.get("ingredient_mapping"), list):
+        coerced["ingredient_mapping"] = item["ingredient_mapping"]
+    return coerced
 
 
 def _string_list(value: Any) -> list[str]:

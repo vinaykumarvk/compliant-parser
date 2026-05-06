@@ -606,11 +606,21 @@ def _evaluate_question(
         or "co-accused" in q
     ):
         accused_field = _complaint_field(parsed_output, "who.accused")
-        accused_present = _normalize_status(accused_field.get("status")) == "present"
+        accused_status = _normalize_status(accused_field.get("status"))
+        accused_present = accused_status in ("present", "uncertain")
+        accused_values = "; ".join(str(v) for v in accused_field.get("values", [])[:3]) or str(accused_field.get("value") or "")
+        # Text-based fallback: look for accused-related keywords in the petition text
+        text_has_accused = _text_has(basis_text, "accused", "suspect", "offender", "perpetrator", "assailant")
+        text_has_accused_detail = _regex_has(basis_text, r"\b(?:s/o|d/o|w/o|son of|daughter of|wife of|husband of|aged?\s+\d|r/o|resident of)\b")
         unknown_declared = _text_has(basis_text, "unknown accused", "unknown person", "unknown persons", "unidentified")
-        if accused_present:
+        if accused_present and accused_values.strip():
             status = "present"
-            evidence = "; ".join(str(v) for v in accused_field.get("values", [])[:3]) or str(accused_field.get("value") or "")
+            evidence = accused_values
+        elif accused_present or (text_has_accused and text_has_accused_detail):
+            # Parser extracted something or text has identifiable accused info
+            status = "present" if text_has_accused_detail else "uncertain"
+            evidence = accused_values or _excerpt_for(basis_text, "accused", "suspect", "offender")
+            missing_detail = "" if status == "present" else "full particulars of the accused"
         elif unknown_declared and ("known, unknown" in q or "is the accused known" in q):
             status = "present"
             evidence = _excerpt_for(basis_text, "unknown")
@@ -618,6 +628,11 @@ def _evaluate_question(
             has_description = _text_has(basis_text, "height", "complexion", "vehicle", "shirt", "clothes", "bike", "car")
             status = "present" if has_description else "missing"
             missing_detail = "" if has_description else "physical description, vehicle, direction, clothes, accent, or identifying clue"
+        elif text_has_accused:
+            # Text mentions accused but no structured field — uncertain
+            status = "uncertain"
+            evidence = _excerpt_for(basis_text, "accused", "suspect", "offender")
+            missing_detail = "full particulars of the accused (name, parentage, address)"
         else:
             status = "missing"
             missing_detail = "accused identity, description, relationship, or unknown-accused statement"
@@ -721,9 +736,15 @@ def evaluate_checklist_questions(
 ) -> list[dict[str, Any]]:
     inferred_offence = infer_offence_type(parsed_output)
     evaluations: list[dict[str, Any]] = []
+    seen_questions: set[str] = set()
     for question in questions or []:
         if not bool(question.get("is_active", True)):
             continue
+        # Deduplicate by question_text to prevent repeats across versions
+        q_text = (question.get("question_text") or "").strip().lower()
+        if q_text in seen_questions:
+            continue
+        seen_questions.add(q_text)
         result = _evaluate_question(
             parsed_output,
             question,

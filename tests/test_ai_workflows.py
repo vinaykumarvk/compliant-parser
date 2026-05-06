@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import kis_client
-from ai_workflows import recommend_sections_from_text
+from ai_workflows import _kis_section_to_bns_payload, recommend_sections_from_text
 
 
 def test_section_recommendation_prefers_kis_when_configured(monkeypatch) -> None:
@@ -44,6 +44,10 @@ def test_section_recommendation_prefers_kis_when_configured(monkeypatch) -> None
 
     assert result["llm_provider"] == "kis"
     assert result["primary_sections"][0]["section_code"] == "BNS-303"
+    # New enhanced fields should have defaults
+    for item in result["primary_sections"]:
+        assert "applicability_rank" in item
+        assert "ingredient_mapping" in item
 
 
 def test_section_recommendation_falls_back_when_kis_disabled(monkeypatch) -> None:
@@ -56,3 +60,42 @@ def test_section_recommendation_falls_back_when_kis_disabled(monkeypatch) -> Non
 
     assert result["llm_provider"] == "stub"
     assert result["primary_sections"] == []
+
+
+def test_kis_section_to_bns_payload_passes_through_enhanced_fields() -> None:
+    item = {
+        "section_code": "BNS-303",
+        "section_title": "Theft",
+        "act_name": "BNS",
+        "confidence_score": 0.86,
+        "legal_reasoning": "Dishonest taking of property.",
+        "supporting_ingredients": ["dishonest taking", "movable property"],
+        "missing_ingredients": ["intent to permanently deprive"],
+        "applicability_rank": 1,
+        "statutory_text": "Whoever intending to take dishonestly...",
+        "ingredient_mapping": [
+            {"ingredient": "dishonest taking", "status": "satisfied", "complaint_fact": "vehicle stolen"},
+        ],
+    }
+    payload = _kis_section_to_bns_payload(item, fit="primary")
+    assert payload["applicability_rank"] == 1
+    assert payload["statutory_text"] == "Whoever intending to take dishonestly..."
+    assert len(payload["ingredient_mapping"]) == 1
+    assert payload["ingredient_mapping"][0]["status"] == "satisfied"
+    assert payload["source"] == "kis"
+
+
+def test_kis_section_to_bns_payload_defaults_when_fields_absent() -> None:
+    item = {
+        "section_code": "BNS-303",
+        "section_title": "Theft",
+        "act_name": "BNS",
+        "confidence_score": 0.86,
+        "legal_reasoning": "Theft.",
+        "supporting_ingredients": [],
+        "missing_ingredients": [],
+    }
+    payload = _kis_section_to_bns_payload(item, fit="primary")
+    assert payload["applicability_rank"] is None
+    assert payload["statutory_text"] is None
+    assert payload["ingredient_mapping"] == []
