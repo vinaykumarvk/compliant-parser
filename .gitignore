@@ -3,6 +3,10 @@
 !.env.example
 __pycache__/
 .venv/
+.object-storage/
 credentials/*.json
 !credentials/.gitkeep
 .DS_Store
+.claude/
+.codex/
+complaints/

@@ -10,6 +10,8 @@ from __future__ import annotations
 import sys
 import os
 
+os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-not-for-production")
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tests.conftest import AsyncTestCase
@@ -65,13 +67,20 @@ class TestEnums(AsyncTestCase):
     """Verify all enum values match BRD specifications."""
 
     async def test_user_roles(self):
-        self.assertEqual(set(r.value for r in UserRole), {"IO", "Clerk", "AI_Admin", "System_Admin"})
+        self.assertEqual(
+            set(r.value for r in UserRole),
+            {"Senior_Command", "Zone_Officer", "SHO", "IO", "Clerk", "AI_Admin", "System_Admin"},
+        )
 
     async def test_case_types(self):
         self.assertEqual(set(t.value for t in CaseType), {"FIR", "Petition", "Suo_Motu"})
 
     async def test_case_statuses(self):
-        expected = {"Open", "Under_Investigation", "Charge_Sheet_Filed", "Closed", "Transferred"}
+        expected = {
+            "Complaint_Received", "FIR_Registered", "Under_Investigation",
+            "Charge_Sheet_Filed", "Closure_Report_Filed", "Court_Proceedings",
+            "Transferred", "Disposed", "Closed_No_FIR",
+        }
         self.assertEqual(set(s.value for s in CaseStatus), expected)
 
     async def test_cctns_sync_statuses(self):
@@ -141,8 +150,8 @@ class TestModelInstantiation(AsyncTestCase):
         self.assertTrue(obj.is_active)
 
     async def test_case(self):
-        obj = Case(case_type=CaseType.FIR, crime_no="0001/2026", status=CaseStatus.Open)
-        self.assertEqual(obj.status, CaseStatus.Open)
+        obj = Case(case_type=CaseType.FIR, crime_no="0001/2026", status=CaseStatus.Complaint_Received)
+        self.assertEqual(obj.status, CaseStatus.Complaint_Received)
         self.assertEqual(obj.cctns_sync_status, CCTNSSyncStatus.Not_Applicable)
 
     async def test_case_document(self):

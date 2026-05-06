@@ -5,14 +5,17 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from complaint_parsing import (
+    _clean_refined_translation_output,
     _clean_ocr_noise,
     _detect_language,
     _extract_complaint_insights_via_openai,
+    _extract_local_language_ocr_text,
     _extract_location_fragment,
     _extract_method_fragment,
     _is_plausible_location,
     _normalize_whitespace,
     _resolve_translation_provider_sequence,
+    _translate_to_english_via_openai,
     get_translation_config,
     parse_document,
 )
@@ -218,6 +221,9 @@ class ComplaintParsingTests(unittest.TestCase):
                 "OPENAI_TRANSLATION_MODEL",
                 "OPENAI_TRANSLATION_REASONING_EFFORT",
                 "OPENAI_TRANSLATION_API_KEY",
+                "TRANSLATION_REFINEMENT_ENABLED",
+                "TRANSLATION_REFINEMENT_PROVIDER",
+                "TRANSLATION_REFINEMENT_MODEL",
                 "OPENAI_EXTRACTION_ENABLED",
                 "OPENAI_EXTRACTION_MODEL",
                 "OPENAI_EXTRACTION_REASONING_EFFORT",
@@ -233,6 +239,7 @@ class ComplaintParsingTests(unittest.TestCase):
                 "TRANSLATION_QE_THRESHOLD",
             )
         }
+        os.environ["TRANSLATION_REFINEMENT_ENABLED"] = "false"
         os.environ["OPENAI_EXTRACTION_ENABLED"] = "false"
         os.environ["OPENAI_EXTRACTION_MIN_CONFIDENCE"] = "medium"
         os.environ["OPENAI_EXTRACTION_REQUIRE_EVIDENCE"] = "true"
@@ -258,6 +265,11 @@ class ComplaintParsingTests(unittest.TestCase):
         self.assertEqual(result["document_type"], "police_complaint")
         self.assertEqual(result["language"]["detected"], "en")
         self.assertEqual(result["language"]["translation_status"], "not_needed")
+        self.assertIn("ocr_text", result["text"])
+        self.assertIn("local_language_ocr_text", result["text"])
+        self.assertIn("raw_english_translation", result["text"])
+        self.assertIn("refined_english_translation", result["text"])
+        self.assertEqual(result["text"]["raw_english_translation"], result["text"]["english_text"])
         self.assertEqual(result["complaint"]["who"]["status"], "present")
         self.assertEqual(result["complaint"]["what"]["status"], "present")
         self.assertEqual(result["complaint"]["when"]["status"], "present")
@@ -269,6 +281,52 @@ class ComplaintParsingTests(unittest.TestCase):
         self.assertTrue(result["summary"]["complaint_brief"])
         self.assertEqual(result["summary"]["review_questions"], [])
         self.assertEqual(result["meta"]["extraction"]["strategy"], "heuristic_only")
+
+    @patch("complaint_parsing._refine_english_translation_via_openai")
+    def test_refines_new_english_uploads_when_refinement_enabled(self, refine_mock) -> None:
+        os.environ["TRANSLATION_REFINEMENT_ENABLED"] = "true"
+        os.environ["TRANSLATION_REFINEMENT_PROVIDER"] = "openai"
+        os.environ["OPENAI_TRANSLATION_API_KEY"] = "test-key"
+        os.environ["TRANSLATION_REFINEMENT_MODEL"] = "gpt-5.2"
+        refine_mock.return_value = {
+            "refined_text": (
+                "I, Ram Kumar, submit that my mobile phone was stolen on 15 March 2026 "
+                "at around 8 PM near XYZ Market bus stand."
+            ),
+            "status": "refined",
+            "provider": "openai_responses",
+            "model": "gpt-5.2",
+            "error": None,
+            "privacy_controls": {},
+        }
+
+        result = parse_document(
+            "My name is Ram Kumar. My mobile phone was stolen on 15 March 2026 "
+            "at around 8 PM near XYZ Market bus stand."
+        )
+
+        refine_mock.assert_called_once()
+        self.assertEqual(result["language"]["detected"], "en")
+        self.assertEqual(result["language"]["translation_status"], "not_needed")
+        self.assertEqual(result["language"]["translation_refinement_status"], "refined")
+        self.assertEqual(result["language"]["translation_refinement_model"], "gpt-5.2")
+        self.assertIn("I, Ram Kumar, submit", result["text"]["refined_english_translation"])
+        self.assertEqual(result["meta"]["text_used_for_extraction"], "refined_english_translation")
+
+    @patch("complaint_parsing._refine_english_translation")
+    def test_forces_refinement_for_originally_english_sources(self, refine_mock) -> None:
+        refine_mock.return_value = {
+            "refined_text": "I, Ram Kumar, submit that my mobile phone was stolen.",
+            "status": "refined",
+            "provider": "openai_responses",
+            "model": "gpt-5.2",
+            "error": None,
+            "privacy_controls": {},
+        }
+
+        parse_document("My name is Ram Kumar. My mobile phone was stolen.")
+
+        self.assertTrue(refine_mock.call_args.kwargs["force_refinement"])
 
     def test_detects_hindi_and_flags_translation_gap_when_disabled(self) -> None:
         os.environ["TRANSLATION_ENABLED"] = "false"
@@ -290,6 +348,81 @@ class ComplaintParsingTests(unittest.TestCase):
         self.assertEqual(language["language_code"], "te")
         self.assertEqual(language["counts"]["te"], 612)
         self.assertEqual(language["counts"]["en"], 617)
+
+    def test_detects_urdu_and_extracts_urdu_ocr_lines(self) -> None:
+        sample = (
+            "To Station House Officer\n"
+            "میرا نام احمد خان ہے۔ میرا موبائل 15 مارچ 2026 کو رات 8 بجے "
+            "چارمینار بس اسٹینڈ کے پاس چوری ہو گیا۔\n"
+            "Phone: 9876543210"
+        )
+
+        language = _detect_language(sample)
+        local_text = _extract_local_language_ocr_text(sample, language["language_code"])
+
+        self.assertEqual(language["language_code"], "ur")
+        self.assertGreater(language["counts"]["ur"], 20)
+        self.assertIn("میرا نام احمد خان", local_text)
+        self.assertNotIn("To Station House Officer", local_text)
+
+    def test_refined_english_cleanup_removes_urdu_script(self) -> None:
+        cleaned = _clean_refined_translation_output(
+            "I, احمد خان, aged 35 years, submit that my phone was stolen. "
+            "[unclear in OCR: موبائل چوری ہو گیا]",
+            fallback_text="I am Ahmad Khan, age 35 years. My phone was stolen.",
+        )
+
+        self.assertNotRegex(cleaned, r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]")
+        self.assertIn("I, Ahmad Khan", cleaned)
+        self.assertIn("my phone was stolen", cleaned)
+
+    @patch("complaint_parsing._translate_to_english_via_openai")
+    @patch("complaint_parsing._translate_to_english_via_google")
+    def test_translates_urdu_and_stores_urdu_ocr_text(
+        self,
+        google_translate_mock,
+        openai_translate_mock,
+    ) -> None:
+        os.environ["TRANSLATION_ENABLED"] = "true"
+        os.environ["TRANSLATION_PROVIDER"] = "auto"
+        os.environ["TRANSLATION_FALLBACK_PROVIDER"] = "openai"
+        os.environ["TRANSLATION_PROJECT_ID"] = "wealth-report"
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["OPENAI_TRANSLATION_MODEL"] = "gpt-5.2"
+        google_translate_mock.return_value = {
+            "english_text": (
+                "My name is Ahmad Khan. My mobile phone was stolen on 15 March 2026 "
+                "at around 8 PM near Charminar bus stand."
+            ),
+            "source_language": "ur",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "google_cloud_translate",
+            "model": None,
+            "error": None,
+        }
+        openai_translate_mock.return_value = {
+            "english_text": "unused",
+            "source_language": "ur",
+            "target_language": "en",
+            "status": "translated",
+            "provider": "openai_responses",
+            "model": "gpt-5.2",
+            "error": None,
+        }
+
+        result = parse_document(
+            "میرا نام احمد خان ہے۔ میرا موبائل 15 مارچ 2026 کو رات 8 بجے "
+            "چارمینار بس اسٹینڈ کے پاس چوری ہو گیا۔"
+        )
+
+        self.assertEqual(result["language"]["detected"], "ur")
+        self.assertEqual(result["language"]["detected_name"], "Urdu")
+        self.assertEqual(result["language"]["translation_status"], "translated")
+        self.assertIn("میرا نام احمد خان", result["text"]["local_language_ocr_text"])
+        self.assertIn("My name is Ahmad Khan", result["text"]["raw_english_translation"])
+        self.assertEqual(google_translate_mock.call_count, 1)
+        self.assertEqual(openai_translate_mock.call_count, 0)
 
     @patch("complaint_parsing._translate_to_english_via_openai")
     @patch("complaint_parsing._translate_to_english_via_google")
@@ -335,6 +468,13 @@ class ComplaintParsingTests(unittest.TestCase):
         self.assertEqual(result["language"]["translation_status"], "translated")
         self.assertEqual(result["language"]["translation_provider"], "openai_responses")
         self.assertEqual(result["language"]["translation_model"], "gpt-5.2")
+        self.assertIn("मेरा नाम राम कुमार", result["text"]["ocr_text"])
+        self.assertIn("मेरा नाम राम कुमार", result["text"]["local_language_ocr_text"])
+        self.assertIn("My name is Ram Kumar", result["text"]["raw_english_translation"])
+        self.assertEqual(
+            result["text"]["refined_english_translation"],
+            result["text"]["raw_english_translation"],
+        )
         self.assertEqual(result["complaint"]["who"]["status"], "present")
         self.assertEqual(result["complaint"]["what"]["status"], "present")
         self.assertEqual(result["complaint"]["when"]["status"], "present")
@@ -342,6 +482,54 @@ class ComplaintParsingTests(unittest.TestCase):
         self.assertEqual(result["complaint"]["how"]["status"], "present")
         self.assertEqual(google_translate_mock.call_count, 1)
         self.assertEqual(openai_translate_mock.call_count, 1)
+
+    @patch("complaint_parsing.urllib.request.urlopen")
+    def test_openai_translation_masks_pii_before_request(self, urlopen_mock) -> None:
+        def fake_urlopen(request, timeout=0, context=None):
+            sent_data = json.loads(request.data.decode("utf-8"))
+            serialized = json.dumps(sent_data, ensure_ascii=False)
+            self.assertNotIn("Rajesh Kumar", serialized)
+            self.assertNotIn("9876543210", serialized)
+            name_token = re.search(r"\[\[PII_PERSON_NAME_\d{4}\]\]", serialized).group(0)
+            phone_token = re.search(r"\[\[PII_PHONE_\d{4}\]\]", serialized).group(0)
+            mock_response = MagicMock()
+            mock_response.read.return_value = json.dumps({
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": f"Complainant {name_token} said phone {phone_token} was stolen.",
+                            }
+                        ],
+                    }
+                ]
+            }).encode()
+            mock_response.__enter__ = lambda s: s
+            mock_response.__exit__ = MagicMock(return_value=False)
+            return mock_response
+
+        urlopen_mock.side_effect = fake_urlopen
+        config = {
+            "target_language": "en",
+            "openai_enabled": True,
+            "openai_api_key": "test-key",
+            "openai_base_url": "https://api.openai.com/v1",
+            "openai_model": "gpt-4o-mini",
+            "openai_reasoning_effort": "none",
+        }
+
+        result = _translate_to_english_via_openai(
+            "I, Rajesh Kumar, phone 9876543210, report theft.",
+            "hi",
+            config,
+        )
+
+        self.assertEqual(result["status"], "translated")
+        self.assertIn("Rajesh Kumar", result["english_text"])
+        self.assertIn("9876543210", result["english_text"])
+        self.assertTrue(result["privacy_controls"]["pii_redacted_before_llm"])
 
     @patch("complaint_parsing._translate_to_english_via_openai")
     @patch("complaint_parsing._translate_to_english_via_google")
@@ -383,6 +571,11 @@ class ComplaintParsingTests(unittest.TestCase):
         self.assertEqual(result["language"]["translation_status"], "translated")
         self.assertEqual(result["language"]["translation_provider"], "google_cloud_translate")
         self.assertEqual(result["text"]["english_text"], google_translate_mock.return_value["english_text"])
+        self.assertIn("గారికి", result["text"]["local_language_ocr_text"])
+        self.assertLess(
+            len(result["text"]["local_language_ocr_text"]),
+            len(result["text"]["ocr_text"]),
+        )
         self.assertEqual(google_translate_mock.call_count, 1)
         self.assertEqual(openai_translate_mock.call_count, 0)
 
@@ -1187,6 +1380,7 @@ class ComplaintParsingTests(unittest.TestCase):
         timing = result["meta"]["timing"]
         self.assertIn("language_detection_ms", timing)
         self.assertIn("translation_ms", timing)
+        self.assertIn("translation_refinement_ms", timing)
         self.assertIn("heuristic_extraction_ms", timing)
         self.assertIn("llm_extraction_ms", timing)
         self.assertIn("fir_draft_ms", timing)
@@ -1260,8 +1454,10 @@ class TestDualLanguageExtraction(unittest.TestCase):
         user_msg = sent_data["input"][-1]["content"][0]["text"]
         self.assertIn("Original text:", user_msg)
         self.assertIn("English translation:", user_msg)
-        self.assertIn("राजेश कुमार", user_msg)
-        self.assertIn("Rajesh Kumar", user_msg)
+        self.assertNotIn("राजेश कुमार", user_msg)
+        self.assertNotIn("Rajesh Kumar", user_msg)
+        self.assertRegex(user_msg, r"\[\[PII_PERSON_NAME_\d{4}\]\]")
+        self.assertRegex(user_msg, r"\[\[PII_ADDRESS_\d{4}\]\]")
         self.assertNotIn("Complaint text:", user_msg)
 
     @patch("complaint_parsing.get_question_guided_extraction_config")
@@ -1293,6 +1489,8 @@ class TestDualLanguageExtraction(unittest.TestCase):
         sent_data = json.loads(urlopen_mock.call_args[0][0].data.decode())
         user_msg = sent_data["input"][-1]["content"][0]["text"]
         self.assertIn("Complaint text:", user_msg)
+        self.assertNotIn("Rajesh Kumar", user_msg)
+        self.assertRegex(user_msg, r"\[\[PII_PERSON_NAME_\d{4}\]\]")
         self.assertNotIn("Original text:", user_msg)
         self.assertNotIn("English translation:", user_msg)
 

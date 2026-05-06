@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 import os
 
+os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-not-for-production")
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tests.conftest import AsyncTestCase
@@ -44,6 +46,7 @@ from cases import (
 )
 from quality_engine import (
     run_quality_check,
+    run_llm_quality_check,
     seed_checklists,
     DEFAULT_CHECKLISTS,
 )
@@ -118,7 +121,7 @@ class TestScenario1_FullCaseLifecycle(AsyncTestCase):
         )
         case_id = case["id"]
         self.assertIsNotNone(case_id)
-        self.assertEqual(case["status"], "Open")
+        self.assertEqual(case["status"], "Complaint_Received")
         self.assertEqual(case["case_type"], "Crime")
 
         # 3. Offence type seed data present
@@ -185,7 +188,7 @@ class TestScenario1_FullCaseLifecycle(AsyncTestCase):
         self.assertGreater(len(statutory), 0)
 
     async def test_case_status_transitions(self):
-        """Verify state machine: Open -> Under_Investigation -> Charge_Sheet_Filed -> Closed."""
+        """Verify state machine: Complaint_Received -> FIR_Registered -> Under_Investigation -> Charge_Sheet_Filed -> Court_Proceedings -> Disposed."""
         case = await create_case(
             data={"case_type": "Crime", "crime_no": "0002/2026",
                   "police_station_id": "ps-001", "brief_facts": "Robbery"},
@@ -194,14 +197,20 @@ class TestScenario1_FullCaseLifecycle(AsyncTestCase):
         )
         cid = case["id"]
 
+        updated = await transition_case_status(cid, "FIR_Registered", "io1", self.db)
+        self.assertEqual(updated["status"], "FIR_Registered")
+
         updated = await transition_case_status(cid, "Under_Investigation", "io1", self.db)
         self.assertEqual(updated["status"], "Under_Investigation")
 
         updated = await transition_case_status(cid, "Charge_Sheet_Filed", "io1", self.db)
         self.assertEqual(updated["status"], "Charge_Sheet_Filed")
 
-        updated = await transition_case_status(cid, "Closed", "io1", self.db)
-        self.assertEqual(updated["status"], "Closed")
+        updated = await transition_case_status(cid, "Court_Proceedings", "io1", self.db)
+        self.assertEqual(updated["status"], "Court_Proceedings")
+
+        updated = await transition_case_status(cid, "Disposed", "io1", self.db)
+        self.assertEqual(updated["status"], "Disposed")
 
     async def test_invalid_status_transition_rejected(self):
         case = await create_case(
@@ -210,9 +219,9 @@ class TestScenario1_FullCaseLifecycle(AsyncTestCase):
             user_id="io1",
             db=self.db,
         )
-        # Open -> Closed is not valid
+        # Complaint_Received -> Under_Investigation is not valid (must go through FIR first)
         with self.assertRaises(Exception):
-            await transition_case_status(case["id"], "Closed", "io1", self.db)
+            await transition_case_status(case["id"], "Under_Investigation", "io1", self.db)
 
 
 class TestScenario2_RBAC(AsyncTestCase):
@@ -237,8 +246,8 @@ class TestScenario2_RBAC(AsyncTestCase):
     async def test_clerk_can_upload_documents(self):
         self.assertIn("Clerk", PERMISSIONS["upload_document"])
 
-    async def test_clerk_cannot_create_cases(self):
-        self.assertNotIn("Clerk", PERMISSIONS["create_case"])
+    async def test_clerk_can_create_cases(self):
+        self.assertIn("Clerk", PERMISSIONS["create_case"])
 
     async def test_system_admin_can_manage_users(self):
         self.assertIn("System_Admin", PERMISSIONS["manage_users"])
@@ -355,8 +364,8 @@ class TestScenario4_BackwardCompatibility(AsyncTestCase):
         self.assertIn("System_Admin", UserRole.__members__)
         self.assertIn("FIR", CaseType.__members__)
         self.assertIn("Petition", CaseType.__members__)
-        self.assertIn("Open", CaseStatus.__members__)
-        self.assertIn("Closed", CaseStatus.__members__)
+        self.assertIn("Complaint_Received", CaseStatus.__members__)
+        self.assertIn("Disposed", CaseStatus.__members__)
 
     async def test_app_module_importable(self):
         import app  # noqa: F401
@@ -498,6 +507,82 @@ class TestCrossModuleIntegration(AsyncTestCase):
 
         templates = await list_templates(db=self.db)
         self.assertGreaterEqual(len(templates), 10)
+
+
+class TestPetitionAnalysisPipeline(AsyncTestCase):
+    """Integration: petition intake → case creation → context-aware quality check."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+
+    async def test_create_case_with_petition_and_run_quality_check(self):
+        """Create case with ai_suggestion_context, attach petition doc, run QC with context."""
+        # 1. Create case with AI suggestion context
+        case = await create_case(
+            {
+                "case_type": "FIR",
+                "crime_no": "0001/2026",
+                "brief_facts": "Theft of mobile phone at Road No. 12, Banjara Hills",
+                "offence_type": "Theft",
+                "ai_suggestion_context": {
+                    "suggestion_id": "sug-int-001",
+                    "brief_facts": "Theft of mobile phone at Road No. 12, Banjara Hills",
+                    "offence_type": "Theft",
+                    "offence_confidence": 0.95,
+                    "case_type": "FIR",
+                    "date_of_occurrence": "2026-03-15",
+                    "risk_flags": ["night_incident", "repeat_location"],
+                    "rationale": "Petition text analysis identified theft pattern",
+                },
+            },
+            "u1",
+            self.db,
+        )
+        case_id = case["id"]
+        self.assertIsNotNone(case["petition_analysis"])
+        self.assertEqual(case["petition_analysis"]["offence_type"], "Theft")
+
+        # 2. Attach a petition document
+        doc = await attach_document(
+            case_id,
+            "petition.txt",
+            "Petition",
+            b"Theft of mobile phone Samsung Galaxy S24 at Banjara Hills on 15 March 2026",
+            "u1",
+            self.db,
+        )
+        self.assertIsNotNone(doc["id"])
+
+        # 3. Build case context from the case data
+        from models import Case as CaseModel
+        case_obj = await self.db.get(CaseModel, case_id)
+        case_context = {
+            "brief_facts": case_obj.brief_facts,
+            "offence_type": case_obj.offence_type,
+            "petition_analysis": case_obj.petition_analysis,
+        }
+
+        # 4. Run quality check with case context (falls back to keyword in test env)
+        petition_text = "Theft of mobile phone Samsung Galaxy S24 at Banjara Hills on 15 March 2026"
+        result = run_llm_quality_check(
+            petition_text, "Petition", offence_type="Theft", case_context=case_context,
+        )
+        self.assertIn("findings", result)
+        self.assertIn("completeness_score", result)
+        self.assertGreater(result["total_items"], 0)
+
+    async def test_case_without_ai_context_still_works(self):
+        """Case created without AI context — quality check still works (backward compat)."""
+        case = await create_case(
+            {"case_type": "FIR", "crime_no": "0002/2026"},
+            "u1",
+            self.db,
+        )
+        self.assertIsNone(case.get("petition_analysis"))
+
+        # Run quality check without case context
+        result = run_quality_check("Some document text for quality check.", "Generic")
+        self.assertIn("findings", result)
 
 
 if __name__ == "__main__":

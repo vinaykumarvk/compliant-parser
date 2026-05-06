@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">IQW</title>
+  <rect width="512" height="512" rx="96" fill="#f8fafc"/>
+  <rect x="68" y="84" width="376" height="344" rx="40" fill="#14532d"/>
+  <path d="M154 166h204v38H154zm0 72h204v38H154zm0 72h132v38H154z" fill="#f8fafc"/>
+  <path d="M336 306l28 28 58-74" fill="none" stroke="#facc15" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

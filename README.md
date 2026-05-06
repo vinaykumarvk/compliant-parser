@@ -8,6 +8,7 @@ The web UI supports:
 - single-document parsing
 - parse history browse, load, delete, and clear
 - JSON / summary / table result review
+- side-by-side document review with tabs for same-language OCR text, raw English translation, and refined English translation
 - compare mode using fresh uploads or saved history
 
 ## 1. Install dependencies
@@ -29,10 +30,12 @@ Required runtime groups:
   - `APP_ADMIN_USERNAME`
   - `APP_ADMIN_PASSWORD`
   - `APP_SESSION_SECRET`
-- Document AI:
-  - `DOC_AI_PROJECT_ID`
-  - `DOC_AI_LOCATION`
-  - `DOC_AI_PROCESSOR_ID`
+  - `JWT_SECRET_KEY`
+- OCR / AI boundary:
+  - RFQ/on-prem: `IQW_OCR_PROVIDER=self_hosted`, `IQW_SELF_HOSTED_OCR_URL`
+  - RFQ/on-prem: `IQW_LLM_PROVIDER=self_hosted`, `IQW_SELF_HOSTED_LLM_URL`
+  - LLM privacy: `IQW_PII_ENCRYPTION_KEY`, `IQW_LLM_PRIVACY_STRICT=true`
+  - Approved external fallback: `DOC_AI_PROJECT_ID`, `DOC_AI_LOCATION`, `DOC_AI_PROCESSOR_ID`, `OPENAI_API_KEY` or `GEMINI_API_KEY`
 - Database:
   - local / proxy: `DATABASE_URL`
   - or Cloud Run / IAM auth: `CLOUD_SQL_CONNECTION_NAME`, `DB_USER`, `DB_NAME`
@@ -40,7 +43,11 @@ Required runtime groups:
 Optional runtime groups:
 
 - `GOOGLE_APPLICATION_CREDENTIALS` for local development only
+- object storage settings (`OBJECT_STORAGE_PROVIDER=minio`, `MINIO_ENDPOINT`, `MINIO_BUCKET`, or `OBJECT_STORAGE_BUCKET` / `GCS_BUCKET`, optional KMS key)
+- on-prem backplanes: `OPENSEARCH_URL`, `REDIS_URL`, `CELERY_BROKER_URL`, `TEMPORAL_ADDRESS`, and pgvector-enabled Postgres
+- Knowledge Intelligence Service: `IQW_KIS_ENABLED=true`, `IQW_KIS_BASE_URL`, `IQW_KIS_API_KEY`, `IQW_KIS_DOMAIN`, and `IQW_KIS_KB`
 - translation settings
+- external AI approval metadata (`EXTERNAL_AI_API_APPROVED`, `EXTERNAL_AI_APPROVAL_ID`, `EXTERNAL_AI_APPROVED_BY`) when Google/OpenAI/Gemini process case data in production
 - `MAX_PARSE_UPLOAD_BYTES`
 - `CORS_ALLOWED_ORIGINS`
 - `RATE_LIMIT_RPM`
@@ -52,12 +59,24 @@ Example:
 APP_ADMIN_USERNAME=operator
 APP_ADMIN_PASSWORD=change-me
 APP_SESSION_SECRET=replace-with-a-long-random-secret
+JWT_SECRET_KEY=replace-with-a-separate-long-random-jwt-secret
 
+IQW_OCR_PROVIDER=self_hosted
+IQW_SELF_HOSTED_OCR_URL=http://ocr-gateway.internal/ocr
+IQW_LLM_PROVIDER=self_hosted
+IQW_SELF_HOSTED_LLM_URL=http://llm-gateway.internal
+IQW_PII_ENCRYPTION_KEY=replace-with-long-random-secret-or-fernet-key
+IQW_LLM_PRIVACY_STRICT=true
+
+# External fallback only with written approval.
 DOC_AI_PROJECT_ID=your-gcp-project-id
 DOC_AI_LOCATION=eu
 DOC_AI_PROCESSOR_ID=your-ocr-or-handwriting-processor-id
 DOC_AI_MIME_TYPE=application/pdf
 DOC_AI_FIELD_MASK=text
+EXTERNAL_AI_API_APPROVED=false
+EXTERNAL_AI_APPROVAL_ID=
+EXTERNAL_AI_APPROVED_BY=
 
 TRANSLATION_ENABLED=true
 TRANSLATION_PROVIDER=auto
@@ -68,7 +87,28 @@ TRANSLATION_TARGET_LANGUAGE=en
 OPENAI_TRANSLATION_ENABLED=true
 OPENAI_TRANSLATION_MODEL=gpt-5.2
 OPENAI_TRANSLATION_REASONING_EFFORT=none
+TRANSLATION_REFINEMENT_ENABLED=true
+TRANSLATION_REFINEMENT_PROVIDER=openai
+TRANSLATION_REFINEMENT_REASONING_EFFORT=medium
 OPENAI_API_KEY=sk-...
+
+IQW_KIS_ENABLED=false
+IQW_KIS_BASE_URL=http://127.0.0.1:8090
+IQW_KIS_DOMAIN=police-iqw
+IQW_KIS_KB=
+IQW_KIS_PROVIDER=self_hosted
+IQW_KIS_MODEL=llama3-legal-local
+IQW_KIS_BACKGROUND_INDEXING=true
+IQW_KIS_MAX_RETRIES=5
+
+OBJECT_STORAGE_PROVIDER=auto
+MINIO_ENDPOINT=http://localhost:9000
+MINIO_BUCKET=iqw-documents
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+OBJECT_STORAGE_KMS_KEY=onprem-hsm-key-ref
+OPENSEARCH_URL=http://localhost:9200
+REDIS_URL=redis://localhost:6379/0
 
 DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/police_complaints
 MAX_PARSE_UPLOAD_BYTES=15728640
@@ -77,7 +117,11 @@ MAX_PARSE_UPLOAD_BYTES=15728640
 Notes:
 
 - The app creates the `parse_records` table automatically at startup if it does not already exist.
+- Versioned schema migrations are applied at startup through the `schema_migrations` table.
+- Uploaded file binaries are stored through the object-storage adapter; production should use GCS.
 - For Cloud Run, prefer an attached service account over a local `GOOGLE_APPLICATION_CREDENTIALS` file.
+- BRD/RFQ-aligned deployments should keep OCR and LLM providers self-hosted. If Google Document AI, OpenAI, or Gemini are used for case data in production, the app requires written approval metadata before those providers are called.
+- Before any LLM request, the app masks detected PII with opaque `[[PII_*]]` tokens, keeps the token map encrypted in memory, sends only the tokenized prompt, and restores tokens after the response returns. Production deployments must set `IQW_PII_ENCRYPTION_KEY`.
 - If you run Docker with `--env-file`, keep values unquoted.
 
 ## 3. Run the app locally
@@ -116,11 +160,17 @@ docker run --rm \
   -e APP_ADMIN_USERNAME=operator \
   -e APP_ADMIN_PASSWORD=change-me \
   -e APP_SESSION_SECRET=replace-with-a-long-random-secret \
+  -e JWT_SECRET_KEY=replace-with-a-separate-long-random-jwt-secret \
+  -e IQW_OCR_PROVIDER=self_hosted \
+  -e IQW_SELF_HOSTED_OCR_URL=http://ocr-gateway.internal/ocr \
+  -e IQW_LLM_PROVIDER=self_hosted \
+  -e IQW_SELF_HOSTED_LLM_URL=http://llm-gateway.internal \
   -e DOC_AI_PROJECT_ID=your-gcp-project-id \
   -e DOC_AI_LOCATION=eu \
   -e DOC_AI_PROCESSOR_ID=your-ocr-or-handwriting-processor-id \
   -e DOC_AI_MIME_TYPE=application/pdf \
   -e DOC_AI_FIELD_MASK=text \
+  -e EXTERNAL_AI_API_APPROVED=false \
   -e TRANSLATION_ENABLED=true \
   -e TRANSLATION_PROVIDER=auto \
   -e TRANSLATION_FALLBACK_PROVIDER=openai \
@@ -130,7 +180,17 @@ docker run --rm \
   -e OPENAI_TRANSLATION_ENABLED=true \
   -e OPENAI_TRANSLATION_MODEL=gpt-5.2 \
   -e OPENAI_TRANSLATION_REASONING_EFFORT=none \
+  -e TRANSLATION_REFINEMENT_ENABLED=true \
+  -e TRANSLATION_REFINEMENT_PROVIDER=openai \
+  -e TRANSLATION_REFINEMENT_REASONING_EFFORT=medium \
   -e OPENAI_API_KEY=sk-... \
+  -e OBJECT_STORAGE_PROVIDER=minio \
+  -e MINIO_ENDPOINT=http://host.docker.internal:9000 \
+  -e MINIO_BUCKET=iqw-documents \
+  -e MINIO_ACCESS_KEY=minioadmin \
+  -e MINIO_SECRET_KEY=minioadmin \
+  -e OPENSEARCH_URL=http://host.docker.internal:9200 \
+  -e REDIS_URL=redis://host.docker.internal:6379/0 \
   -e DATABASE_URL=postgresql+asyncpg://postgres:password@host.docker.internal:5432/police_complaints \
   -v /absolute/path/to/service-account.json:/var/secrets/docai.json:ro \
   -e GOOGLE_APPLICATION_CREDENTIALS=/var/secrets/docai.json \

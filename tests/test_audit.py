@@ -13,7 +13,9 @@ from audit import (
     get_audit_log,
     infer_action_type,
     log_audit_event,
+    _redacted_session_id,
     search_audit_logs,
+    verify_audit_chain,
 )
 
 
@@ -39,6 +41,16 @@ class TestSHA256(AsyncTestCase):
 
     async def test_deterministic(self):
         self.assertEqual(compute_sha256(b"abc"), compute_sha256(b"abc"))
+
+
+class TestAuditSessionRedaction(AsyncTestCase):
+    async def test_cookie_session_is_hashed(self):
+        result = _redacted_session_id("req-1", None, "raw-cookie-secret")
+        self.assertTrue(result.startswith("cookie-sha256:"))
+        self.assertNotIn("raw-cookie-secret", result)
+
+    async def test_missing_session_uses_request_id(self):
+        self.assertEqual(_redacted_session_id("req-1", None, None), "req-1")
 
 
 # ---------------------------------------------------------------------------
@@ -73,13 +85,41 @@ class TestAuditLogging(AsyncTestCase):
             action_type="Edit",
             entity_type="Case",
             entity_id="c-1",
-            details={"field": "status", "old": "Open", "new": "Closed"},
+            details={"field": "status", "old": "Complaint_Received", "new": "FIR_Registered"},
             ip_address="10.0.0.1",
             session_id="sess-abc",
             db=self.db,
         )
         self.assertEqual(entry["ip_address"], "10.0.0.1")
         self.assertEqual(entry["action_details"]["field"], "status")
+        self.assertIsNotNone(entry["entry_hash"])
+        self.assertEqual(entry["hash_algorithm"], "sha256")
+
+    async def test_log_entries_are_hash_chained(self):
+        first = await log_audit_event("u1", "Login", "User", "u1", db=self.db)
+        second = await log_audit_event("u1", "Upload", "CaseDocument", "doc-1", db=self.db)
+        self.assertIsNone(first["previous_hash"])
+        self.assertEqual(second["previous_hash"], first["entry_hash"])
+
+    async def test_verify_audit_chain_detects_tampering(self):
+        entry = await log_audit_event(
+            "u1",
+            "Edit",
+            "Case",
+            "case-1",
+            details={"status": "Complaint_Received"},
+            db=self.db,
+        )
+        ok = await verify_audit_chain(db=self.db)
+        self.assertTrue(ok["verified"])
+
+        from models import AuditLog
+
+        stored = await self.db.get(AuditLog, entry["id"])
+        stored.action_details = {"status": "FIR_Registered"}
+        broken = await verify_audit_chain(db=self.db)
+        self.assertFalse(broken["verified"])
+        self.assertEqual(broken["reason"], "entry_hash_mismatch")
 
 
 # ---------------------------------------------------------------------------

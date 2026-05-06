@@ -28,13 +28,18 @@ def _raise_api_error(code_name: str, message: str, field: Optional[str] = None) 
 
 _jwt_secret_env = os.getenv("JWT_SECRET_KEY") or os.getenv("APP_SESSION_SECRET")
 if not _jwt_secret_env:
-    import warnings
-    warnings.warn(
-        "JWT_SECRET_KEY not set — using insecure default. "
-        "Set JWT_SECRET_KEY env var before deploying to production.",
-        stacklevel=1,
-    )
-    _jwt_secret_env = "dev-insecure-secret-change-me"
+    if os.getenv("IQW_ALLOW_INSECURE_DEV_SECRET", "").lower() in {"1", "true", "yes", "on"}:
+        import warnings
+        warnings.warn(
+            "JWT_SECRET_KEY not set - using explicitly enabled insecure development secret.",
+            stacklevel=1,
+        )
+        _jwt_secret_env = "dev-insecure-secret-change-me"
+    else:
+        raise RuntimeError(
+            "JWT_SECRET_KEY or APP_SESSION_SECRET must be set. "
+            "Set IQW_ALLOW_INSECURE_DEV_SECRET=true only for local throwaway development."
+        )
 JWT_SECRET_KEY: str = _jwt_secret_env
 JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
 
@@ -64,7 +69,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 def create_access_token(
     user_id: str,
     role: str,
-    expires_delta: timedelta = timedelta(minutes=30),
+    expires_delta: timedelta = timedelta(hours=8),
 ) -> str:
     now = datetime.now(timezone.utc)
     payload = {
@@ -135,9 +140,9 @@ def check_lockout(employee_id: str) -> None:
     if locked_until is not None:
         if time.time() < locked_until:
             _raise_api_error(
-                "AUTHENTICATION_ERROR",
-                "Account locked due to too many failed attempts. "
-                f"Try again in {LOCKOUT_DURATION_MINUTES} minutes.",
+                "ACCOUNT_LOCKED",
+                "Account locked due to multiple failed attempts. "
+                "Try again after 30 minutes or contact your System Administrator.",
             )
         # Lock period has expired — reset
         clear_failed_attempts(employee_id)
@@ -159,8 +164,9 @@ def clear_failed_attempts(employee_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 PERMISSIONS: Dict[str, list] = {
-    "create_case": ["IO"],
-    "upload_document": ["IO", "Clerk"],
+    "create_case": ["IO", "Clerk", "SHO", "System_Admin"],
+    "transition_case_status": ["IO", "SHO", "System_Admin"],
+    "upload_document": ["IO", "Clerk", "SHO", "System_Admin"],
     "run_quality_check": ["IO", "AI_Admin"],
     "run_section_recommendation": ["IO", "AI_Admin"],
     "run_congruence": ["IO", "AI_Admin"],

@@ -1,0 +1,1 @@
+"""KIS ingestion pipeline."""

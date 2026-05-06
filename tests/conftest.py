@@ -101,6 +101,17 @@ class MockAsyncSession:
         """No-op for mock."""
         pass
 
+    async def refresh(self, obj: Any, attribute_names: Optional[list] = None) -> None:
+        """No-op — relationships are already in-memory on the object."""
+        pass
+
+    async def delete(self, obj: Any) -> None:
+        """Remove an object from the in-memory store."""
+        table = self._table_for(obj)
+        pk = self._pk_for(obj)
+        store = self._store.get(table, {})
+        store.pop(pk, None)
+
     async def get(self, model_cls: type, pk: str) -> Optional[Any]:
         table = model_cls.__tablename__
         store = self._store.get(table, {})

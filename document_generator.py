@@ -18,6 +18,7 @@ from jinja2 import Template
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from audit import compute_sha256
 from models import DocumentTemplate, GeneratedDocument
 
 # ---------------------------------------------------------------------------
@@ -39,6 +40,15 @@ _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def compute_generated_document_hash(content: Optional[str]) -> str:
+    """Return the SHA-256 hash for generated document text content."""
+    return compute_sha256((content or "").encode("utf-8"))
+
+
+def _refresh_generated_document_hash(doc: GeneratedDocument) -> None:
+    doc.sha256_hash = compute_generated_document_hash(doc.generated_content)
 
 
 def extract_placeholders(template_body: str) -> List[str]:
@@ -70,14 +80,27 @@ def _template_to_dict(tpl: DocumentTemplate) -> dict:
 
 
 def _gendoc_to_dict(doc: GeneratedDocument, auto_filled: list, missing: list) -> dict:
+    signature_status = doc.digital_signature_status.value if hasattr(doc.digital_signature_status, "value") else doc.digital_signature_status
     return {
         "id": doc.id,
         "template_id": doc.template_id,
         "case_id": doc.case_id,
         "category": doc.document_category.value if hasattr(doc.document_category, "value") else doc.document_category,
         "content": doc.generated_content,
+        "sha256": doc.sha256_hash,
         "auto_filled_fields": auto_filled,
         "missing_fields": missing,
+        "missing_prompt": (
+            "Please complete the following case details before generating this document: "
+            + ", ".join(missing)
+            + "."
+            if missing else None
+        ),
+        "digital_signature_status": signature_status,
+        "is_read_only": signature_status == "Signed",
+        "signed_by": doc.signed_by,
+        "signed_at": doc.signed_at.isoformat() if doc.signed_at else None,
+        "signature_certificate_details": doc.signature_certificate_details,
         "created_by": doc.created_by,
         "created_at": doc.created_at.isoformat() if doc.created_at else None,
         "updated_at": doc.updated_at.isoformat() if doc.updated_at else None,
@@ -328,6 +351,42 @@ async def seed_templates(db: AsyncSession) -> None:
             ),
             "version": 1,
         },
+        {
+            "id": "tpl-lgn-005",
+            "template_name": "Google Platform Data Request",
+            "category": "Legal_Notice",
+            "template_body": (
+                "To,\nThe Law Enforcement Response Team,\nGoogle LLC\n\n"
+                "Subject: Platform data preservation and disclosure request\n\n"
+                "Ref: Crime No. {{case_number}}, P.S. {{police_station}}\n\n"
+                "Please preserve and provide subscriber, login, IP, and content metadata "
+                "available for the following identifier in connection with the investigation:\n\n"
+                "Google Account / Email / Channel ID: {{platform_identifier}}\n"
+                "Date Range: {{date_range}}\n"
+                "Legal Basis: {{legal_basis}}\n\n"
+                "{{io_name}}, {{io_rank}}\n"
+                "Date: {{date}}"
+            ),
+            "version": 1,
+        },
+        {
+            "id": "tpl-lgn-006",
+            "template_name": "Meta Platform Data Request",
+            "category": "Legal_Notice",
+            "template_body": (
+                "To,\nThe Law Enforcement Response Team,\nMeta Platforms, Inc.\n\n"
+                "Subject: Preservation and disclosure request for platform records\n\n"
+                "Ref: Crime No. {{case_number}}, P.S. {{police_station}}\n\n"
+                "Please preserve and disclose available account, login, IP, and message "
+                "metadata for the following identifier:\n\n"
+                "Facebook / Instagram / WhatsApp Identifier: {{platform_identifier}}\n"
+                "Date Range: {{date_range}}\n"
+                "Legal Basis: {{legal_basis}}\n\n"
+                "{{io_name}}, {{io_rank}}\n"
+                "Date: {{date}}"
+            ),
+            "version": 1,
+        },
 
         # ---- Legal Drafts (4) ----
         {
@@ -522,6 +581,7 @@ async def generate_document(
         auto_filled_fields={"filled": auto_filled, "missing": missing},
         created_by=user_id,
     )
+    _refresh_generated_document_hash(doc)
     db.add(doc)
     await db.flush()
     return _gendoc_to_dict(doc, auto_filled, missing)
@@ -542,10 +602,47 @@ async def update_generated_document(
     doc = await db.get(GeneratedDocument, doc_id)
     if doc is None:
         raise ValueError(f"Generated document '{doc_id}' not found.")
+    signature_status = doc.digital_signature_status.value if hasattr(doc.digital_signature_status, "value") else doc.digital_signature_status
+    if signature_status == "Signed":
+        raise ValueError("Signed documents are read-only and cannot be edited.")
 
     doc.generated_content = content
+    _refresh_generated_document_hash(doc)
     doc.updated_by = user_id
     doc.io_edited = True
+    await db.flush()
+    af = doc.auto_filled_fields or {}
+    return _gendoc_to_dict(doc, af.get("filled", []), af.get("missing", []))
+
+
+async def sign_generated_document(
+    doc_id: str,
+    user_id: str,
+    pin: Optional[str],
+    *,
+    db: AsyncSession,
+) -> dict:
+    """Apply a DSC signature when a token has been detected by configuration."""
+    import os
+
+    doc = await db.get(GeneratedDocument, doc_id)
+    if doc is None:
+        raise ValueError(f"Generated document '{doc_id}' not found.")
+    if os.getenv("DSC_TOKEN_PRESENT", "").lower() not in {"1", "true", "yes"}:
+        raise RuntimeError("Digital Signature Certificate not detected. Please insert your DSC token and try again.")
+    if not pin:
+        raise ValueError("DSC PIN is required.")
+
+    doc.digital_signature_status = "Signed"
+    _refresh_generated_document_hash(doc)
+    doc.signed_by = user_id
+    doc.signed_at = datetime.now(timezone.utc)
+    doc.signature_certificate_details = {
+        "certificate_subject": os.getenv("DSC_CERT_SUBJECT", "Configured DSC token"),
+        "certificate_serial": os.getenv("DSC_CERT_SERIAL", "unavailable"),
+        "provider": os.getenv("DSC_PROVIDER", "Local DSC bridge"),
+        "document_sha256": doc.sha256_hash,
+    }
     await db.flush()
     af = doc.auto_filled_fields or {}
     return _gendoc_to_dict(doc, af.get("filled", []), af.get("missing", []))

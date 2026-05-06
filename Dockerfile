@@ -37,6 +37,7 @@ RUN adduser --disabled-password --gecos "" --home /home/appuser appuser
 
 COPY *.py /app/
 COPY index.html manifest.json sw.js /app/
+COPY static /app/static
 
 RUN chown -R appuser:appuser /app
 USER appuser

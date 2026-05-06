@@ -1,5 +1,5 @@
-const CACHE_NAME = "iqw-v1";
-const STATIC_ASSETS = ["/", "/manifest.json"];
+const CACHE_NAME = "iqw-v5";
+const STATIC_ASSETS = ["/", "/manifest.json", "/static/icons/iqw-icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -29,8 +29,17 @@ self.addEventListener("fetch", (event) => {
         })
       )
     );
+  } else if (url.pathname === "/" || url.pathname === "/index.html") {
+    // Network-first for the main page so code changes take effect
+    event.respondWith(
+      fetch(event.request).then((resp) => {
+        const clone = resp.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        return resp;
+      }).catch(() => caches.match(event.request))
+    );
   } else {
-    // Cache-first for static assets
+    // Cache-first for other static assets
     event.respondWith(
       caches.match(event.request).then((cached) => cached || fetch(event.request))
     );

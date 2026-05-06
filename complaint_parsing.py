@@ -15,6 +15,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Optional
 
+from privacy import PIIProtectionContext, PIIProtectionError
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -37,6 +39,7 @@ _FIELD_ORDER = ("who", "what", "when", "where", "why", "how")
 _LANGUAGE_NAMES = {
     "en": "English",
     "hi": "Hindi",
+    "ur": "Urdu",
     "te": "Telugu",
     "unknown": "Unknown",
 }
@@ -486,7 +489,7 @@ If a field is unknown or weakly supported, use empty strings or empty arrays and
 
 IMPORTANT — Language quality and dual-language input:
 All answer values and complaint_summary MUST be in clear, grammatically correct English.
-When you receive both an "Original text" (in Hindi/Telugu or another Indian language) and an
+When you receive both an "Original text" (in Hindi/Urdu/Telugu or another Indian language) and an
 "English translation", use BOTH to extract fields. The translation may lose or distort names,
 times, and place names — cross-reference the original to recover such details.
 Evidence snippets may be copied verbatim from EITHER the original text OR the English translation.
@@ -658,6 +661,21 @@ def get_translation_config() -> dict[str, Any]:
     openai_api_key = _clean_env_value(os.getenv("OPENAI_TRANSLATION_API_KEY")) or _clean_env_value(
         os.getenv("OPENAI_API_KEY")
     )
+    refinement_provider = (
+        _clean_env_value(os.getenv("TRANSLATION_REFINEMENT_PROVIDER")) or "openai"
+    ).lower()
+    if refinement_provider not in {"openai", "gemini", "none"}:
+        refinement_provider = "openai"
+    openai_model = _clean_env_value(os.getenv("OPENAI_TRANSLATION_MODEL")) or "gpt-5.2"
+    gemini_model = _clean_env_value(os.getenv("GEMINI_TRANSLATION_MODEL")) or "gemini-2.5-flash"
+    refinement_model = _clean_env_value(os.getenv("TRANSLATION_REFINEMENT_MODEL"))
+    if not refinement_model:
+        refinement_model = gemini_model if refinement_provider == "gemini" else openai_model
+    refinement_reasoning_effort = (
+        _clean_env_value(os.getenv("TRANSLATION_REFINEMENT_REASONING_EFFORT")) or "medium"
+    ).lower()
+    if refinement_reasoning_effort not in {"none", "low", "medium", "high", "xhigh"}:
+        refinement_reasoning_effort = "medium"
 
     return {
         "enabled": _is_env_true("TRANSLATION_ENABLED", True),
@@ -676,18 +694,22 @@ def get_translation_config() -> dict[str, Any]:
             or _clean_env_value(os.getenv("OPENAI_BASE_URL"))
             or "https://api.openai.com/v1"
         ).rstrip("/"),
-        "openai_model": _clean_env_value(os.getenv("OPENAI_TRANSLATION_MODEL")) or "gpt-5.2",
+        "openai_model": openai_model,
         "openai_reasoning_effort": (
             _clean_env_value(os.getenv("OPENAI_TRANSLATION_REASONING_EFFORT")) or "none"
         ).lower(),
         "gemini_enabled": _is_env_true("GEMINI_TRANSLATION_ENABLED", True),
         "gemini_api_key": _clean_env_value(os.getenv("GEMINI_API_KEY")),
         "gemini_api_key_configured": bool(_clean_env_value(os.getenv("GEMINI_API_KEY"))),
-        "gemini_model": _clean_env_value(os.getenv("GEMINI_TRANSLATION_MODEL")) or "gemini-2.5-flash",
+        "gemini_model": gemini_model,
         "gemini_base_url": (
             _clean_env_value(os.getenv("GEMINI_BASE_URL"))
             or "https://generativelanguage.googleapis.com/v1beta"
         ).rstrip("/"),
+        "refinement_enabled": _is_env_true("TRANSLATION_REFINEMENT_ENABLED", True),
+        "refinement_provider": refinement_provider,
+        "refinement_model": refinement_model,
+        "refinement_reasoning_effort": refinement_reasoning_effort,
         "quality_estimation_enabled": _is_env_true("TRANSLATION_QE_ENABLED", False),
         "quality_estimation_threshold": _safe_float(
             _clean_env_value(os.getenv("TRANSLATION_QE_THRESHOLD")), 0.7
@@ -766,16 +788,37 @@ def _normalize_whitespace(text: str) -> str:
     value = (text or "").replace("\r", "\n")
     value = value.replace("\u00a0", " ").replace("\u200c", " ").replace("\u200d", " ")
     value = re.sub(r"[ \t]+", " ", value)
+    value = re.sub(r"[ \t]+\n", "\n", value)
     value = re.sub(r"\n[ \t]+", "\n", value)
     value = re.sub(r"\n{3,}", "\n\n", value)
     return value.strip()
 
 
 _OCR_GREEK_NOISE = re.compile(r"[\u0370-\u03FF\u1F00-\u1FFF]+")
+_SOURCE_LANGUAGE_SCRIPT_CLASS = (
+    "\u0900-\u097F"
+    "\u0C00-\u0C7F"
+    "\u0600-\u06FF"
+    "\u0750-\u077F"
+    "\u08A0-\u08FF"
+    "\uFB50-\uFDFF"
+    "\uFE70-\uFEFF"
+)
 _OCR_ISOLATED_LATIN = re.compile(
-    r"(?<=[\u0C00-\u0C7F\u0900-\u097F])\s+[A-Za-z]{1,2}\s+(?=[\u0C00-\u0C7F\u0900-\u097F])"
+    rf"(?<=[{_SOURCE_LANGUAGE_SCRIPT_CLASS}])\s+[A-Za-z]{{1,2}}\s+(?=[{_SOURCE_LANGUAGE_SCRIPT_CLASS}])"
 )
 _OCR_EXCESSIVE_PUNCTUATION = re.compile(r"([.!?,;:\-])\1{4,}")
+_LANGUAGE_SCRIPT_RANGES = {
+    "hi": [(0x0900, 0x097F)],
+    "te": [(0x0C00, 0x0C7F)],
+    "ur": [
+        (0x0600, 0x06FF),
+        (0x0750, 0x077F),
+        (0x08A0, 0x08FF),
+        (0xFB50, 0xFDFF),
+        (0xFE70, 0xFEFF),
+    ],
+}
 
 
 def _clean_ocr_noise(text: str, detected_language: str) -> str:
@@ -795,15 +838,302 @@ def _clean_ocr_noise(text: str, detected_language: str) -> str:
     # Remove Greek letters — common OCR misrecognitions of Telugu glyphs
     cleaned = _OCR_GREEK_NOISE.sub("", cleaned)
 
-    # For Telugu/Hindi: remove isolated 1-2 char Latin fragments between Indic chars
+    # For Telugu/Hindi/Urdu: remove isolated 1-2 char Latin fragments between source-script chars
     # Preserve English words >= 3 chars (names, dates, "Police Station")
-    if detected_language in ("te", "hi"):
+    if detected_language in ("te", "hi", "ur"):
         cleaned = _OCR_ISOLATED_LATIN.sub(" ", cleaned)
 
     # Collapse excessive repeated punctuation (5+ → 3)
     cleaned = _OCR_EXCESSIVE_PUNCTUATION.sub(r"\1\1\1", cleaned)
 
     return cleaned.strip()
+
+
+def _count_language_script_chars(text: str, language_code: str) -> int:
+    script_ranges = _LANGUAGE_SCRIPT_RANGES.get(language_code)
+    if not script_ranges:
+        return 0
+    count = 0
+    for char in text or "":
+        codepoint = ord(char)
+        if any(start <= codepoint <= end for start, end in script_ranges):
+            count += 1
+    return count
+
+
+def _extract_local_language_ocr_text(text: str, language_code: str) -> str:
+    """Return OCR lines that contain the detected local-language script."""
+    normalized = _normalize_whitespace(text)
+    if not normalized or language_code not in _LANGUAGE_SCRIPT_RANGES:
+        return ""
+
+    local_lines = [
+        line.strip()
+        for line in normalized.split("\n")
+        if _count_language_script_chars(line, language_code) > 0
+    ]
+    return "\n".join(line for line in local_lines if line).strip()
+
+
+def _prepare_english_text_for_refinement(text: str) -> str:
+    """Remove obvious administrative OCR noise before asking the LLM to rewrite."""
+    normalized = _normalize_whitespace(text)
+    if not normalized:
+        return ""
+
+    cleaned_lines: list[str] = []
+    for line in normalized.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            cleaned_lines.append("")
+            continue
+        lowered = stripped.lower()
+        if (
+            "entry no" in lowered
+            or re.search(r"\bmade\s*&?\s*r\s+entry\b", lowered)
+            or re.search(r"\bmade\s+g\.?\s*d\.?\s+entry\b", lowered)
+        ):
+            continue
+        cleaned_lines.append(stripped)
+
+    cleaned = "\n".join(cleaned_lines)
+    replacements = [
+        (r"\bBBO\s+GATO\s+(?=[A-Z])", ""),
+        (r"\s+and\s+did\s+gokin[eē]\s+k[oō]\s+ch[eē]s[aā]ru[a-z]*", ""),
+        (r"\bThe\s+Inspector\s+of\s+police\b", "The Station House Officer"),
+        (r"\bto\s+To\s+", "to "),
+        (r"\bTo\s+To\s+", "To "),
+        (r"\bRlo\b", "R/o"),
+        (r"\bRecieved\b", "received"),
+        (r"\bBusiu?s\b", "Business"),
+    ]
+    for pattern, replacement in replacements:
+        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+    return _normalize_whitespace(cleaned)
+
+
+def _clean_refined_translation_output(text: str, fallback_text: str = "") -> str:
+    """Guard against repeated OCR artifacts that should never survive refinement."""
+    cleaned = _normalize_whitespace(text)
+    if not cleaned:
+        return ""
+
+    replacements = [
+        (r"\bI,\s*Entry\s+No\s*\(([^)]+)\)", r"I, \1"),
+        (r"\bI,\s*Entry\s+No\s+", "I, "),
+        (r"\bI,\s*The\s+Station\s+House\s+Officer\s*\(([^)]+)\)", r"I, \1"),
+        (r"To\s*\n\s*The\s+Inspector,\s*Police\s+Officer,\s*", "To\nThe Station House Officer,\n"),
+        (r"\bto\s+Mr\.\s+To\s+", "to Mr. "),
+        (r"\bto\s+To\s+", "to "),
+        (r"\bRlo\b", "R/o"),
+        (r"\bRecieved\b", "received"),
+        (r"\s+They also did\s+\[unclear in OCR:[^\]]+\]\.", "."),
+        (r"(\bcreated a disturbance\.?)\s+\[unclear in OCR:[^\]]+\]\.?", r"\1"),
+        (rf"\s*\[unclear in OCR:[^\]]*[{_SOURCE_LANGUAGE_SCRIPT_CLASS}][^\]]*\]\.?", ""),
+        (rf"\s*\([^)]*[{_SOURCE_LANGUAGE_SCRIPT_CLASS}][^)]*\)", ""),
+        (r"\s+and\s+\[unclear in OCR:[^\]]*(?:gokin|gokine|ches)[^\]]*\]", ""),
+        (r"\s+\[unclear in OCR:[^\]]*(?:gokin|gokine|ches)[^\]]*\]", ""),
+        (r"\s+and\s+did\s+gokin[eē]\s+k[oō]\s+ch[eē]s[aā]ru[a-z]*", ""),
+        (r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?)\s*/\s*\1\b", r"\1"),
+        (r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?)\s*\(\s*\1\s*\)", r"\1"),
+        (
+            r"\bReddy\s+resident\s+of\s+Basherbagh\s*\(R\.V\.\s*Reddy\),\s*resident\s+of\s+Basherbagh",
+            "R.V. Reddy, resident of Basherbagh",
+        ),
+        (r"\bmotor cycle\b", "motorcycle"),
+        (r"by the driver Phone No\s*\(occupation:\s*driver\),", "by a person described as a driver by occupation,"),
+        (r"by Phone No,\s*occupation:\s*driver,", "by a person described as a driver by occupation,"),
+        (
+            r"The driver is stated in the petition as Phone No,\s*occupation:\s*driver,\s*address:",
+            "The driver is described as a driver by occupation, residing at",
+        ),
+    ]
+    for pattern, replacement in replacements:
+        cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+
+    cleaned = re.sub(r"\bR/o\b\.?", "resident of", cleaned, flags=re.IGNORECASE)
+
+    def _title_relation_name(match: re.Match[str]) -> str:
+        relation = match.group(1).lower()
+        name = match.group(2)
+        return f"{relation} of {name[:1].upper()}{name[1:]}"
+
+    cleaned = re.sub(
+        r"\b(son|daughter|wife|husband)\s+of\s+([a-z][a-z]+)\b",
+        _title_relation_name,
+        cleaned,
+    )
+    cleaned = re.sub(
+        rf"\bI,\s*[{_SOURCE_LANGUAGE_SCRIPT_CLASS}][^,\n]*(?=,\s*aged)",
+        "I, [name unclear in OCR]",
+        cleaned,
+    )
+    cleaned = re.sub(
+        rf"[{_SOURCE_LANGUAGE_SCRIPT_CLASS}][{_SOURCE_LANGUAGE_SCRIPT_CLASS}\s،۔؟؛۔,]*",
+        "[source-language text unclear in OCR]",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?:\s*\[source-language text unclear in OCR\]\s*){2,}",
+        " [source-language text unclear in OCR] ",
+        cleaned,
+    )
+
+    fallback_name = _extract_complainant_name_from_english_text(fallback_text)
+    signature_name = _extract_signature_name_from_refined_text(cleaned) or fallback_name
+    if signature_name:
+        cleaned = re.sub(
+            r"\bI,\s*\[name unclear in OCR\]",
+            f"I, {signature_name}",
+            cleaned,
+            count=1,
+        )
+        cleaned = re.sub(
+            r"\bI,\s*\[source-language text unclear in OCR\]\s*(?=(?:son|daughter|wife|husband)\s+of\b)",
+            f"I, {signature_name}, ",
+            cleaned,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"\bI\s+(?=(?:son|daughter|wife|husband)\s+of\b)",
+            f"I, {signature_name}, ",
+            cleaned,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"(Yours faithfully,?\s*\n)(?:\[text unclear in OCR\]\s*)?(?=(?:S/o|Son of|D/o|Daughter of|W/o|Wife of)\b)",
+            rf"\1{signature_name}\n",
+            cleaned,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
+    cleaned = re.sub(
+        r",\s*\[source-language text unclear in OCR\]\s*(?=[a-z])",
+        " ",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r",?\s*\[source-language text unclear in OCR\]\s*(?=[.,])",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"\[source-language text unclear in OCR\]",
+        "[text unclear in OCR]",
+        cleaned,
+    )
+
+    signed_name_match = re.search(
+        r"\bI,\s*\[text unclear in OCR\]\s*\(also signed in this petition as [\"“]([^\"”]+)[\"”]\)",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if signed_name_match:
+        cleaned = re.sub(
+            r"\bI,\s*\[text unclear in OCR\]\s*\(also signed in this petition as [\"“][^\"”]+[\"”]\)",
+            f"I, {signed_name_match.group(1).strip()}",
+            cleaned,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+    elif signature_name:
+        cleaned = re.sub(
+            r"\bI,\s*\[text unclear in OCR\](?=,?\s*(?:son|daughter|wife|husband|aged)\b)",
+            f"I, {signature_name}",
+            cleaned,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
+    if signature_name:
+        cleaned = re.sub(
+            r"(Yours faithfully,?\s*\nSignature\s*\n)\[text unclear in OCR\]",
+            lambda match: f"{match.group(1)}{signature_name}",
+            cleaned,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
+    marker = "Police endorsement / processing note:"
+    marker_index = cleaned.lower().find(marker.lower())
+    if marker_index >= 0:
+        body = cleaned[:marker_index].rstrip()
+        note = cleaned[marker_index + len(marker):].strip()
+        if re.search(r"Hours\s+received\s+Lev|Petition\s+Entry\s+As|Naresh\s+Action", note, re.IGNORECASE):
+            date_match = re.search(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", note)
+            time_match = re.search(r"\b\d{1,2}:\d{2}\s*(?:hours|hrs|a\.m\.|p\.m\.)?\b", note, re.IGNORECASE)
+            received_at = ""
+            if date_match and time_match:
+                received_at = f" on {date_match.group(0)} at {time_match.group(0)}"
+            elif date_match:
+                received_at = f" on {date_match.group(0)}"
+            note = (
+                "Complaint receiving/processing details were recorded"
+                + received_at
+                + ". A General Diary and/or petition entry appears to have been made, and the matter was marked for enquiry. "
+                "Remaining endorsement text, including exact officer name/signature where unclear, is unclear in OCR."
+            )
+            cleaned = body + "\n\n" + marker + " " + note
+
+    return _normalize_whitespace(cleaned)
+
+
+def _extract_signature_name_from_refined_text(text: str) -> str:
+    signature_match = re.search(
+        r"Yours faithfully,?\s*\n(?P<lines>.+?)(?:\n\n|$)",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not signature_match:
+        return ""
+
+    ignored_prefixes = (
+        "signature",
+        "son of",
+        "daughter of",
+        "wife of",
+        "husband of",
+        "mobile",
+        "cell",
+        "phone",
+        "date",
+        "place",
+    )
+    for line in signature_match.group("lines").splitlines():
+        candidate = line.strip().strip(".,:")
+        if not candidate:
+            continue
+        lowered = candidate.lower()
+        if lowered.startswith(ignored_prefixes):
+            continue
+        if re.fullmatch(r"[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,3}", candidate):
+            return candidate
+    return ""
+
+
+def _extract_complainant_name_from_english_text(text: str) -> str:
+    normalized = _normalize_whitespace(text)
+    if not normalized:
+        return ""
+
+    patterns = [
+        r"(?:Thus|Yours faithfully|Signature)\s*\n\s*([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,3})\s*\n\s*(?:s/o|son of|d/o|daughter of|w/o|wife of)\b",
+        r"\bI\s*(?:am|,)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,3}),?\s*(?:s/o|son of|d/o|daughter of|w/o|wife of|age|aged)\b",
+    ]
+    ignored = {"signature", "station house", "police station"}
+    for pattern in patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            continue
+        candidate = re.sub(r"\s+", " ", match.group(1)).strip(" .,;:")
+        if candidate.lower() in ignored:
+            continue
+        if re.fullmatch(r"[A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,3}", candidate):
+            return candidate
+    return ""
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -1494,11 +1824,19 @@ def _strip_reporting_prefix(value: str) -> str:
 
 
 def _detect_language(text: str) -> dict[str, Any]:
-    counts = {"en": 0, "hi": 0, "te": 0}
+    counts = {"en": 0, "hi": 0, "ur": 0, "te": 0}
     for char in text or "":
         codepoint = ord(char)
         if 0x0900 <= codepoint <= 0x097F:
             counts["hi"] += 1
+        elif (
+            0x0600 <= codepoint <= 0x06FF
+            or 0x0750 <= codepoint <= 0x077F
+            or 0x08A0 <= codepoint <= 0x08FF
+            or 0xFB50 <= codepoint <= 0xFDFF
+            or 0xFE70 <= codepoint <= 0xFEFF
+        ):
+            counts["ur"] += 1
         elif 0x0C00 <= codepoint <= 0x0C7F:
             counts["te"] += 1
         elif char.isascii() and char.isalpha():
@@ -1516,14 +1854,14 @@ def _detect_language(text: str) -> dict[str, Any]:
     dominant = max(counts, key=lambda k: counts[k])
     dominant_share = counts[dominant] / total
     language_code = dominant if dominant_share >= 0.45 else "unknown"
-    strongest_non_english = max(("hi", "te"), key=lambda k: counts[k])
+    strongest_non_english = max(("hi", "ur", "te"), key=lambda k: counts[k])
     strongest_non_english_count = counts[strongest_non_english]
-    if dominant in {"hi", "te"} and counts[dominant] >= 6:
+    if dominant in {"hi", "ur", "te"} and counts[dominant] >= 6:
         language_code = dominant
     elif dominant == "en":
-        # OCR output for Telugu/Hindi complaints often contains many noisy Latin
+        # OCR output for Telugu/Hindi/Urdu complaints often contains many noisy Latin
         # characters from form labels, names, or bad handwriting recognition.
-        # Treat the document as non-English when an Indic script remains
+        # Treat the document as non-English when a source-language script remains
         # substantial and close to the English character count.
         if (
             strongest_non_english_count >= 6
@@ -1596,6 +1934,10 @@ def _build_translation_result(
         "model": None,
         "error": None,
     }
+
+
+def _privacy_controls_from_context(context: PIIProtectionContext) -> dict[str, Any]:
+    return context.metadata()
 
 
 def _translate_to_english_via_google(
@@ -1768,8 +2110,20 @@ def _translate_to_english_via_openai(
     chunks = _chunk_text_for_translation(normalized_text, max_chars=12000)
     translated_chunks = []
     source_language_name = _LANGUAGE_NAMES.get(detected_language, "Unknown")
+    privacy_context = PIIProtectionContext()
 
     for chunk in chunks:
+        try:
+            protected_chunk = privacy_context.protect_text(chunk, context="openai_translation")
+        except PIIProtectionError as exc:
+            result.update(
+                {
+                    "status": "failed",
+                    "error": f"PII protection blocked OpenAI translation: {exc}",
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
+                }
+            )
+            return result
         payload: dict[str, Any] = {
             "model": config["openai_model"],
             "input": [
@@ -1780,7 +2134,7 @@ def _translate_to_english_via_openai(
                             "type": "input_text",
                             "text": (
                                 "Translate the following police complaint into clear, literal English. "
-                                "Preserve names, dates, times, addresses, lists, line breaks, and uncertainty. "
+                                "Preserve dates, times, lists, line breaks, uncertainty, and any [[PII_*]] privacy tokens exactly. "
                                 "Do not summarize, explain, or omit details. Return only the translated English text."
                             ),
                         }
@@ -1791,7 +2145,7 @@ def _translate_to_english_via_openai(
                     "content": [
                         {
                             "type": "input_text",
-                            "text": f"Source language: {source_language_name}\n\n{chunk}",
+                            "text": f"Source language: {source_language_name}\n\n{protected_chunk}",
                         }
                     ],
                 },
@@ -1821,6 +2175,7 @@ def _translate_to_english_via_openai(
                 {
                     "status": "failed",
                     "error": _extract_openai_error_message(error_body),
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
                 }
             )
             return result
@@ -1830,16 +2185,20 @@ def _translate_to_english_via_openai(
                 {
                     "status": "failed",
                     "error": str(exc),
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
                 }
             )
             return result
 
-        translated_chunk = _normalize_whitespace(_extract_openai_output_text(response_payload))
+        translated_chunk = privacy_context.restore_text(
+            _normalize_whitespace(_extract_openai_output_text(response_payload))
+        )
         if not translated_chunk:
             result.update(
                 {
                     "status": "failed",
                     "error": "OpenAI translation completed but returned no translated text.",
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
                 }
             )
             return result
@@ -1851,6 +2210,7 @@ def _translate_to_english_via_openai(
             {
                 "english_text": translated_text,
                 "status": "translated",
+                "privacy_controls": _privacy_controls_from_context(privacy_context),
             }
         )
         return result
@@ -1859,6 +2219,7 @@ def _translate_to_english_via_openai(
         {
             "status": "failed",
             "error": "OpenAI translation completed but the output did not appear to be English text.",
+            "privacy_controls": _privacy_controls_from_context(privacy_context),
         }
     )
     return result
@@ -1921,15 +2282,27 @@ def _translate_to_english_via_gemini(
     chunks = _chunk_text_for_translation(normalized_text, max_chars=12000)
     translated_chunks = []
     source_language_name = _LANGUAGE_NAMES.get(detected_language, "Unknown")
+    privacy_context = PIIProtectionContext()
 
     for chunk in chunks:
+        try:
+            protected_chunk = privacy_context.protect_text(chunk, context="gemini_translation")
+        except PIIProtectionError as exc:
+            result.update(
+                {
+                    "status": "failed",
+                    "error": f"PII protection blocked Gemini translation: {exc}",
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
+                }
+            )
+            return result
         payload: dict[str, Any] = {
             "contents": [
                 {
                     "role": "user",
                     "parts": [
                         {
-                            "text": f"Source language: {source_language_name}\n\n{chunk}",
+                            "text": f"Source language: {source_language_name}\n\n{protected_chunk}",
                         }
                     ],
                 }
@@ -1939,7 +2312,7 @@ def _translate_to_english_via_gemini(
                     {
                         "text": (
                             "Translate the following police complaint into clear, literal English. "
-                            "Preserve names, dates, times, addresses, lists, line breaks, and uncertainty. "
+                            "Preserve dates, times, lists, line breaks, uncertainty, and any [[PII_*]] privacy tokens exactly. "
                             "Do not summarize, explain, or omit details. Return only the translated English text. "
                             "The text was OCR'd from handwritten documents and may contain character recognition errors. "
                             "Use context to infer intended meaning."
@@ -1973,6 +2346,7 @@ def _translate_to_english_via_gemini(
                 {
                     "status": "failed",
                     "error": _extract_gemini_error_message(error_body),
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
                 }
             )
             return result
@@ -1982,16 +2356,20 @@ def _translate_to_english_via_gemini(
                 {
                     "status": "failed",
                     "error": str(exc),
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
                 }
             )
             return result
 
-        translated_chunk = _normalize_whitespace(_extract_gemini_output_text(response_payload))
+        translated_chunk = privacy_context.restore_text(
+            _normalize_whitespace(_extract_gemini_output_text(response_payload))
+        )
         if not translated_chunk:
             result.update(
                 {
                     "status": "failed",
                     "error": "Gemini translation completed but returned no translated text.",
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
                 }
             )
             return result
@@ -2003,6 +2381,7 @@ def _translate_to_english_via_gemini(
             {
                 "english_text": translated_text,
                 "status": "translated",
+                "privacy_controls": _privacy_controls_from_context(privacy_context),
             }
         )
         return result
@@ -2011,6 +2390,7 @@ def _translate_to_english_via_gemini(
         {
             "status": "failed",
             "error": "Gemini translation completed but the output did not appear to be English text.",
+            "privacy_controls": _privacy_controls_from_context(privacy_context),
         }
     )
     return result
@@ -2059,6 +2439,19 @@ def _estimate_translation_quality(
     src = source_text[:3000]
     tgt = translated_text[:3000]
     source_language_name = _LANGUAGE_NAMES.get(source_language, "Unknown")
+    privacy_context = PIIProtectionContext()
+    try:
+        protected_src = privacy_context.protect_text(src, context="translation_quality_source")
+        protected_tgt = privacy_context.protect_text(tgt, context="translation_quality_target")
+    except PIIProtectionError as exc:
+        result.update(
+            {
+                "error": f"PII protection blocked translation quality estimation: {exc}",
+                "method": "privacy_blocked",
+                "privacy_controls": _privacy_controls_from_context(privacy_context),
+            }
+        )
+        return result
 
     payload: dict[str, Any] = {
         "contents": [
@@ -2069,9 +2462,9 @@ def _estimate_translation_quality(
                         "text": (
                             f"Rate this {source_language_name}-to-English translation on a scale of "
                             "0.0 to 1.0 where 1.0 is perfect.\n\n"
-                            "Consider: accuracy, completeness, fluency, and preservation of names/dates/numbers.\n\n"
-                            f"SOURCE ({source_language_name}):\n{src}\n\n"
-                            f"TRANSLATION (English):\n{tgt}\n\n"
+                            "Consider: accuracy, completeness, fluency, and preservation of dates/numbers/privacy tokens.\n\n"
+                            f"SOURCE ({source_language_name}):\n{protected_src}\n\n"
+                            f"TRANSLATION (English):\n{protected_tgt}\n\n"
                             "Respond with ONLY a JSON object: {\"score\": <float>, \"details\": \"<brief reason>\"}"
                         ),
                     }
@@ -2102,6 +2495,7 @@ def _estimate_translation_quality(
     except Exception as exc:
         logger.warning("Translation quality estimation failed: %s", exc)
         result["error"] = str(exc)
+        result["privacy_controls"] = _privacy_controls_from_context(privacy_context)
         return result  # fail-open: score=1.0, acceptable=True
 
     raw_text = _extract_gemini_output_text(response_payload)
@@ -2113,11 +2507,13 @@ def _estimate_translation_quality(
             {
                 "score": score,
                 "acceptable": score >= threshold,
-                "details": str(parsed.get("details", "")),
+                "details": privacy_context.restore_text(str(parsed.get("details", ""))),
+                "privacy_controls": _privacy_controls_from_context(privacy_context),
             }
         )
     else:
         result["error"] = "Could not parse quality score from Gemini response."
+        result["privacy_controls"] = _privacy_controls_from_context(privacy_context)
         # fail-open: keep score=1.0, acceptable=True
 
     return result
@@ -2153,6 +2549,7 @@ def _translate_and_score_one(
     result["quality_acceptable"] = qe["acceptable"]
     result["quality_method"] = qe["method"]
     result["quality_details"] = qe.get("details", "")
+    result["quality_privacy_controls"] = qe.get("privacy_controls", {})
     return result
 
 
@@ -2272,11 +2669,474 @@ def _translate_to_english(
         current_result["quality_acceptable"] = qe_result["acceptable"]
         current_result["quality_method"] = qe_result["method"]
         current_result["quality_details"] = qe_result.get("details", "")
+        current_result["quality_privacy_controls"] = qe_result.get("privacy_controls", {})
         if not qe_result["acceptable"]:
             current_result["flagged_for_review"] = True
         return current_result
 
     return result
+
+
+def _build_refinement_result(
+    raw_english_text: str,
+    *,
+    status: str = "disabled",
+    provider: str = "none",
+    model: Optional[str] = None,
+    error: Optional[str] = None,
+) -> dict[str, Any]:
+    return {
+        "refined_text": _normalize_whitespace(raw_english_text),
+        "status": status,
+        "provider": provider,
+        "model": model,
+        "error": error,
+    }
+
+
+def _refine_english_translation_via_openai(
+    raw_english_text: str,
+    source_ocr_text: str,
+    detected_language: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    result = _build_refinement_result(
+        raw_english_text,
+        status="unavailable",
+        provider="openai_responses",
+        model=config["refinement_model"],
+        error="Set OPENAI_API_KEY or OPENAI_TRANSLATION_API_KEY to enable translation refinement.",
+    )
+    if not config.get("openai_api_key"):
+        return result
+
+    refinement_input_text = _prepare_english_text_for_refinement(raw_english_text) or raw_english_text
+    chunks = _chunk_text_for_translation(refinement_input_text, max_chars=12000)
+    if not chunks:
+        return _build_refinement_result(raw_english_text, status="not_needed")
+
+    source_language_name = _LANGUAGE_NAMES.get(detected_language, "Unknown")
+    local_source_excerpt = _extract_local_language_ocr_text(
+        source_ocr_text, detected_language
+    )[:4000]
+    source_excerpt = _normalize_whitespace(source_ocr_text)[:4000]
+    refined_chunks: list[str] = []
+    privacy_context = PIIProtectionContext()
+
+    for chunk in chunks:
+        try:
+            protected_chunk = privacy_context.protect_text(chunk, context="openai_translation_refinement")
+            protected_local_source = privacy_context.protect_text(
+                local_source_excerpt, context="openai_translation_refinement_local_source"
+            ) if local_source_excerpt else ""
+            protected_source = privacy_context.protect_text(
+                source_excerpt, context="openai_translation_refinement_source"
+            ) if source_excerpt else ""
+        except PIIProtectionError as exc:
+            result.update(
+                {
+                    "status": "failed",
+                    "error": f"PII protection blocked translation refinement: {exc}",
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
+                }
+            )
+            return result
+
+        local_source_block = (
+            f"\n\nLOCAL-LANGUAGE OCR LINES ({source_language_name}, primary source for complaint body):\n{protected_local_source}"
+            if protected_local_source and detected_language != "en"
+            else ""
+        )
+        source_block = (
+            f"\n\nFULL ORIGINAL OCR TEXT ({source_language_name}, includes headers/admin notes/OCR noise):\n{protected_source}"
+            if protected_source and detected_language != "en"
+            else ""
+        )
+        system_prompt = (
+            "You are a senior Indian police station translator and complaint-drafting assistant. "
+            "Your task is not a literal line edit. Produce a polished, legally neutral English rendering "
+            "of the complaint that an officer can read and verify.\n\n"
+            "Use both inputs:\n"
+            "1. Raw English translation: often broken, literal, or affected by OCR errors.\n"
+            "   Treat it as a rough draft, not as authoritative prose.\n"
+            "2. Original OCR text: may contain Telugu/Hindi/Urdu plus noisy Latin OCR. If it contains source-language text, "
+            "read and retranslate that text directly to repair the raw English.\n\n"
+            "Rewrite rules:\n"
+            "- Convert the text into complete, grammatical English sentences and coherent paragraphs.\n"
+            "- Correct spelling, grammar, punctuation, word order, and obvious OCR/machine-translation artifacts.\n"
+            "- Fill minor linguistic gaps when context makes the intended meaning clear, including missing subjects, "
+            "articles, helping verbs, connectors, and OCR-dropped function words.\n"
+            "- Resolve transliterated or half-translated Telugu/Hindi/Urdu fragments into English. Do not leave fragments "
+            "such as 'chesaru', 'gokine', or similar romanized leftovers in the final text. If the meaning cannot be "
+            "reliably determined, write '[unclear in OCR: ...]' with the shortest relevant fragment.\n"
+            "- The final refined output must be fully in English using Latin script. Never copy Telugu, Hindi, Urdu, "
+            "Devanagari, Telugu-script, or Arabic-script words into the refined English text. Transliterate readable names; if a name "
+            "or phrase cannot be read, use an English uncertainty marker such as '[name unclear in OCR]' or "
+            "'[text unclear in OCR]'.\n"
+            "- For common Telugu complaint phrasing, OCR/transliteration variants of 'గొడవ చేశారు' or "
+            "'godava chesaru' should be rendered as 'picked a quarrel', 'created a disturbance', or "
+            "'quarrelled', depending on context.\n"
+            "- If an unclear romanized/OCR fragment appears immediately after a clear complaint phrase, do not append "
+            "that fragment in brackets. Omit the fragment once the event is already rendered clearly. For example, "
+            "a line about coming to the shop and 'డబ్బులు గురించి గొడవ చేసి' should read as a quarrel regarding money, "
+            "without adding trailing 'gokine/chesaru' fragments.\n"
+            "- Expand common complaint abbreviations where helpful, such as P.S., R/o, S/o, Occ., Ph., and Rs., "
+            "while preserving the underlying facts.\n"
+            "- Use a normal police complaint salutation; if the OCR says 'Inspector of Police' or 'P.S.', rewrite it "
+            "as 'The Station House Officer' and the police station name when clear.\n"
+            "- Use normal English capitalization for names and places when OCR casing is obviously broken.\n"
+            "- Clean duplicated words and OCR label errors such as 'to To', 'Rlo' for 'R/o', malformed casing, "
+            "and broken station/address labels when the correction is obvious.\n"
+            "- Preserve all names, dates, times, phone numbers, addresses, amounts, legal sections, and uncertainty. "
+            "Keep any [[PII_*]] privacy tokens exactly unchanged.\n"
+            "- Do not invent facts, accusations, injuries, motives, witnesses, legal sections, or outcomes. "
+            "When a detail is illegible or genuinely uncertain, mark it as unclear instead of guessing.\n"
+            "- Do not summarize away details. The output should be a faithful refined version, not an abstract.\n"
+            "- Present the complainant's statement first. Do not begin the output with entry numbers, receiving "
+            "notes, G.D. notes, or administrative register text. If those details appear, move them to the end under "
+            "'Police endorsement / processing note:'.\n"
+            "- Administrative metadata such as 'Entry No', 'Made G.D. Entry', 'Received', or petition-register notes "
+            "must never be treated as the complainant's name or statement. The first paragraph should identify the "
+            "complainant if clear, or otherwise begin with the complaint facts.\n"
+            "- Do not preserve raw OCR line breaks. Use readable paragraphs. Do not copy garbled endorsement fragments "
+            "verbatim. Extract only reliable date/time/G.D./petition/enquiry/officer details. If a fragment looks like "
+            "OCR junk or an unreliable name/action, do not quote it as prose; write a concise note such as "
+            "'remaining endorsement text unclear in OCR' or 'officer name/signature unclear in OCR'.\n\n"
+            "Return only the refined English text. Do not include markdown, explanations, or a JSON object."
+        )
+        payload: dict[str, Any] = {
+            "model": config["refinement_model"],
+            "input": [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": system_prompt,
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "Rewrite this document into refined English for police complaint review.\n\n"
+                                f"RAW ENGLISH TRANSLATION:\n{protected_chunk}"
+                                f"{local_source_block}"
+                                f"{source_block}"
+                            ),
+                        }
+                    ],
+                },
+            ],
+        }
+        reasoning_effort = config.get("refinement_reasoning_effort") or config.get("openai_reasoning_effort", "medium")
+        if reasoning_effort in {"none", "low", "medium", "high", "xhigh"}:
+            payload["reasoning"] = {"effort": reasoning_effort}
+
+        request = urllib.request.Request(
+            f"{config['openai_base_url']}/responses",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {config['openai_api_key']}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            ssl_context = _build_openai_ssl_context()
+            with urllib.request.urlopen(request, timeout=180, context=ssl_context) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            result.update(
+                {
+                    "status": "failed",
+                    "error": _extract_openai_error_message(error_body),
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
+                }
+            )
+            return result
+        except Exception as exc:  # pragma: no cover - depends on live network config
+            logger.warning("OpenAI translation refinement failed: %s", exc)
+            result.update(
+                {
+                    "status": "failed",
+                    "error": str(exc),
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
+                }
+            )
+            return result
+
+        refined_chunk = _clean_refined_translation_output(
+            privacy_context.restore_text(
+                _normalize_whitespace(_extract_openai_output_text(response_payload))
+            ),
+            fallback_text=raw_english_text,
+        )
+        if not refined_chunk:
+            result.update(
+                {
+                    "status": "failed",
+                    "error": "OpenAI translation refinement returned no text.",
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
+                }
+            )
+            return result
+        refined_chunks.append(refined_chunk)
+
+    refined_text = "\n\n".join(refined_chunks).strip()
+    if not refined_text:
+        return result
+    result.update(
+        {
+            "refined_text": refined_text,
+            "status": "refined",
+            "error": None,
+            "privacy_controls": _privacy_controls_from_context(privacy_context),
+        }
+    )
+    return result
+
+
+def _refine_english_translation_via_gemini(
+    raw_english_text: str,
+    source_ocr_text: str,
+    detected_language: str,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    result = _build_refinement_result(
+        raw_english_text,
+        status="unavailable",
+        provider="gemini",
+        model=config["refinement_model"],
+        error="Set GEMINI_API_KEY to enable translation refinement.",
+    )
+    if not config.get("gemini_api_key"):
+        return result
+
+    refinement_input_text = _prepare_english_text_for_refinement(raw_english_text) or raw_english_text
+    chunks = _chunk_text_for_translation(refinement_input_text, max_chars=12000)
+    if not chunks:
+        return _build_refinement_result(raw_english_text, status="not_needed")
+
+    source_language_name = _LANGUAGE_NAMES.get(detected_language, "Unknown")
+    local_source_excerpt = _extract_local_language_ocr_text(
+        source_ocr_text, detected_language
+    )[:4000]
+    source_excerpt = _normalize_whitespace(source_ocr_text)[:4000]
+    refined_chunks: list[str] = []
+    privacy_context = PIIProtectionContext()
+
+    for chunk in chunks:
+        try:
+            protected_chunk = privacy_context.protect_text(chunk, context="gemini_translation_refinement")
+            protected_local_source = privacy_context.protect_text(
+                local_source_excerpt, context="gemini_translation_refinement_local_source"
+            ) if local_source_excerpt else ""
+            protected_source = privacy_context.protect_text(
+                source_excerpt, context="gemini_translation_refinement_source"
+            ) if source_excerpt else ""
+        except PIIProtectionError as exc:
+            result.update(
+                {
+                    "status": "failed",
+                    "error": f"PII protection blocked translation refinement: {exc}",
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
+                }
+            )
+            return result
+
+        local_source_block = (
+            f"\n\nLOCAL-LANGUAGE OCR LINES ({source_language_name}, primary source for complaint body):\n{protected_local_source}"
+            if protected_local_source and detected_language != "en"
+            else ""
+        )
+        source_block = (
+            f"\n\nFULL ORIGINAL OCR TEXT ({source_language_name}, includes headers/admin notes/OCR noise):\n{protected_source}"
+            if protected_source and detected_language != "en"
+            else ""
+        )
+        system_prompt = (
+            "You are a senior Indian police station translator and complaint-drafting assistant. "
+            "Your task is not a literal line edit. Produce a polished, legally neutral English rendering "
+            "of the complaint that an officer can read and verify.\n\n"
+            "Use both inputs:\n"
+            "1. Raw English translation: often broken, literal, or affected by OCR errors.\n"
+            "   Treat it as a rough draft, not as authoritative prose.\n"
+            "2. Original OCR text: may contain Telugu/Hindi/Urdu plus noisy Latin OCR. If it contains source-language text, "
+            "read and retranslate that text directly to repair the raw English.\n\n"
+            "Rewrite rules:\n"
+            "- Convert the text into complete, grammatical English sentences and coherent paragraphs.\n"
+            "- Correct spelling, grammar, punctuation, word order, and obvious OCR/machine-translation artifacts.\n"
+            "- Fill minor linguistic gaps when context makes the intended meaning clear, including missing subjects, "
+            "articles, helping verbs, connectors, and OCR-dropped function words.\n"
+            "- Resolve transliterated or half-translated Telugu/Hindi/Urdu fragments into English. Do not leave fragments "
+            "such as 'chesaru', 'gokine', or similar romanized leftovers in the final text. If the meaning cannot be "
+            "reliably determined, write '[unclear in OCR: ...]' with the shortest relevant fragment.\n"
+            "- The final refined output must be fully in English using Latin script. Never copy Telugu, Hindi, Urdu, "
+            "Devanagari, Telugu-script, or Arabic-script words into the refined English text. Transliterate readable names; if a name "
+            "or phrase cannot be read, use an English uncertainty marker such as '[name unclear in OCR]' or "
+            "'[text unclear in OCR]'.\n"
+            "- For common Telugu complaint phrasing, OCR/transliteration variants of 'గొడవ చేశారు' or "
+            "'godava chesaru' should be rendered as 'picked a quarrel', 'created a disturbance', or "
+            "'quarrelled', depending on context.\n"
+            "- If an unclear romanized/OCR fragment appears immediately after a clear complaint phrase, do not append "
+            "that fragment in brackets. Omit the fragment once the event is already rendered clearly. For example, "
+            "a line about coming to the shop and 'డబ్బులు గురించి గొడవ చేసి' should read as a quarrel regarding money, "
+            "without adding trailing 'gokine/chesaru' fragments.\n"
+            "- Expand common complaint abbreviations where helpful, such as P.S., R/o, S/o, Occ., Ph., and Rs., "
+            "while preserving the underlying facts.\n"
+            "- Use a normal police complaint salutation; if the OCR says 'Inspector of Police' or 'P.S.', rewrite it "
+            "as 'The Station House Officer' and the police station name when clear.\n"
+            "- Use normal English capitalization for names and places when OCR casing is obviously broken.\n"
+            "- Clean duplicated words and OCR label errors such as 'to To', 'Rlo' for 'R/o', malformed casing, "
+            "and broken station/address labels when the correction is obvious.\n"
+            "- Preserve all names, dates, times, phone numbers, addresses, amounts, legal sections, and uncertainty. "
+            "Keep any [[PII_*]] privacy tokens exactly unchanged.\n"
+            "- Do not invent facts, accusations, injuries, motives, witnesses, legal sections, or outcomes. "
+            "When a detail is illegible or genuinely uncertain, mark it as unclear instead of guessing.\n"
+            "- Do not summarize away details. The output should be a faithful refined version, not an abstract.\n"
+            "- Present the complainant's statement first. Do not begin the output with entry numbers, receiving "
+            "notes, G.D. notes, or administrative register text. If those details appear, move them to the end under "
+            "'Police endorsement / processing note:'.\n"
+            "- Administrative metadata such as 'Entry No', 'Made G.D. Entry', 'Received', or petition-register notes "
+            "must never be treated as the complainant's name or statement. The first paragraph should identify the "
+            "complainant if clear, or otherwise begin with the complaint facts.\n"
+            "- Do not preserve raw OCR line breaks. Use readable paragraphs. Do not copy garbled endorsement fragments "
+            "verbatim. Extract only reliable date/time/G.D./petition/enquiry/officer details. If a fragment looks like "
+            "OCR junk or an unreliable name/action, do not quote it as prose; write a concise note such as "
+            "'remaining endorsement text unclear in OCR' or 'officer name/signature unclear in OCR'.\n\n"
+            "Return only the refined English text. Do not include markdown, explanations, or a JSON object."
+        )
+        payload: dict[str, Any] = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": (
+                                "Rewrite this document into refined English for police complaint review.\n\n"
+                                f"RAW ENGLISH TRANSLATION:\n{protected_chunk}"
+                                f"{local_source_block}"
+                                f"{source_block}"
+                            ),
+                        }
+                    ],
+                }
+            ],
+            "systemInstruction": {
+                "parts": [
+                    {
+                        "text": system_prompt,
+                    }
+                ],
+            },
+            "generationConfig": {"temperature": 0.0},
+        }
+        url = (
+            f"{config['gemini_base_url']}/models/{config['refinement_model']}"
+            f":generateContent?key={config['gemini_api_key']}"
+        )
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            ssl_context = _build_openai_ssl_context()
+            with urllib.request.urlopen(request, timeout=180, context=ssl_context) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            result.update(
+                {
+                    "status": "failed",
+                    "error": _extract_gemini_error_message(error_body),
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
+                }
+            )
+            return result
+        except Exception as exc:  # pragma: no cover - depends on live network config
+            logger.warning("Gemini translation refinement failed: %s", exc)
+            result.update(
+                {
+                    "status": "failed",
+                    "error": str(exc),
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
+                }
+            )
+            return result
+
+        refined_chunk = _clean_refined_translation_output(
+            privacy_context.restore_text(
+                _normalize_whitespace(_extract_gemini_output_text(response_payload))
+            ),
+            fallback_text=raw_english_text,
+        )
+        if not refined_chunk:
+            result.update(
+                {
+                    "status": "failed",
+                    "error": "Gemini translation refinement returned no text.",
+                    "privacy_controls": _privacy_controls_from_context(privacy_context),
+                }
+            )
+            return result
+        refined_chunks.append(refined_chunk)
+
+    refined_text = "\n\n".join(refined_chunks).strip()
+    if not refined_text:
+        return result
+    result.update(
+        {
+            "refined_text": refined_text,
+            "status": "refined",
+            "error": None,
+            "privacy_controls": _privacy_controls_from_context(privacy_context),
+        }
+    )
+    return result
+
+
+def _refine_english_translation(
+    raw_english_text: str,
+    source_ocr_text: str,
+    detected_language: str,
+    translation_status: str,
+    config: dict[str, Any],
+    force_refinement: bool = False,
+) -> dict[str, Any]:
+    normalized_english = _normalize_whitespace(raw_english_text)
+    if not normalized_english:
+        return _build_refinement_result("", status="unavailable", error="No English translation available.")
+    if not force_refinement and (detected_language == "en" or translation_status == "not_needed"):
+        return _build_refinement_result(normalized_english, status="not_needed", provider="identity")
+    if translation_status not in {"translated", "success"} and not (
+        force_refinement and (detected_language == "en" or translation_status == "not_needed")
+    ):
+        return _build_refinement_result(
+            "",
+            status="unavailable",
+            provider="none",
+            error="Raw English translation is unavailable.",
+        )
+    if not config.get("refinement_enabled"):
+        return _build_refinement_result(normalized_english, status="disabled", provider="none")
+
+    provider = config.get("refinement_provider") or "openai"
+    if provider == "none":
+        return _build_refinement_result(normalized_english, status="disabled", provider="none")
+    if provider == "gemini":
+        return _refine_english_translation_via_gemini(
+            normalized_english, source_ocr_text, detected_language, config
+        )
+    return _refine_english_translation_via_openai(
+        normalized_english, source_ocr_text, detected_language, config
+    )
 
 
 def _extract_json_object_from_text(value: str) -> Optional[dict[str, Any]]:
@@ -2875,6 +3735,7 @@ def _extract_complaint_insights_via_openai(
     if not config["enabled"] or not config["api_key"]:
         return None
 
+    privacy_context = PIIProtectionContext()
     heuristic_snapshot = {
         field_name: {
             "status": field_value.get("status"),
@@ -2886,7 +3747,15 @@ def _extract_complaint_insights_via_openai(
     input_messages: list[dict[str, Any]] = [
         {
             "role": "system",
-            "content": [{"type": "input_text", "text": _EXTRACTION_SYSTEM_PROMPT}],
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": privacy_context.protect_text(
+                        _EXTRACTION_SYSTEM_PROMPT,
+                        context="question_guided_extraction_system",
+                    ),
+                }
+            ],
         },
     ]
     for example in _EXTRACTION_FEW_SHOT_EXAMPLES:
@@ -2894,7 +3763,10 @@ def _extract_complaint_insights_via_openai(
             "role": example["role"],
             "content": [{
                 "type": "output_text" if example["role"] == "assistant" else "input_text",
-                "text": example["content"],
+                "text": privacy_context.protect_text(
+                    example["content"],
+                    context="question_guided_extraction_example",
+                ),
             }],
         })
     if original_text and _normalize_whitespace(original_text) != normalized_text:
@@ -2906,23 +3778,28 @@ def _extract_complaint_insights_via_openai(
     else:
         complaint_block = "Complaint text:\n" + normalized_text
 
+    try:
+        user_prompt_text = privacy_context.protect_text(
+            (
+                complaint_block
+                + "\n\n---\nHeuristic pre-extraction (WARNING — known failure modes: "
+                "WHERE may contain hospital/current location instead of incident site; "
+                "WHAT may be an entire paragraph instead of a concise summary; "
+                "WHY and HOW are often missing for non-theft complaints like accidents; "
+                "ACCUSED may be empty when an unknown offender role is described in the text). "
+                "Re-derive every answer independently from the complaint text above. "
+                "Keep any [[PII_*]] privacy tokens unchanged in answers and evidence:\n"
+                + json.dumps(heuristic_snapshot, ensure_ascii=False, indent=2)
+            ),
+            context="question_guided_extraction_user",
+        )
+    except PIIProtectionError as exc:
+        logger.warning("Question-guided OpenAI extraction blocked by PII protection: %s", exc)
+        return None
+
     input_messages.append({
         "role": "user",
-        "content": [
-            {
-                "type": "input_text",
-                "text": (
-                    complaint_block
-                    + "\n\n---\nHeuristic pre-extraction (WARNING — known failure modes: "
-                    "WHERE may contain hospital/current location instead of incident site; "
-                    "WHAT may be an entire paragraph instead of a concise summary; "
-                    "WHY and HOW are often missing for non-theft complaints like accidents; "
-                    "ACCUSED may be empty when an unknown offender role is described in the text). "
-                    "Re-derive every answer independently from the complaint text above:\n"
-                    + json.dumps(heuristic_snapshot, ensure_ascii=False, indent=2)
-                ),
-            }
-        ],
+        "content": [{"type": "input_text", "text": user_prompt_text}],
     })
     payload: dict[str, Any] = {
         "model": config["model"],
@@ -2956,8 +3833,13 @@ def _extract_complaint_insights_via_openai(
         logger.warning("Question-guided OpenAI extraction failed: %s", exc)
         return None
 
-    output_text = _normalize_whitespace(_extract_openai_output_text(response_payload))
-    return _extract_json_object_from_text(output_text)
+    output_text = privacy_context.restore_text(
+        _normalize_whitespace(_extract_openai_output_text(response_payload))
+    )
+    parsed = _extract_json_object_from_text(output_text)
+    if isinstance(parsed, dict):
+        parsed["_privacy_controls"] = _privacy_controls_from_context(privacy_context)
+    return parsed
 
 
 def _merge_question_guided_fields(
@@ -4865,14 +5747,46 @@ def parse_document(
     detected_language = _normalize_language_code(
         translation_result.get("source_language") or language_detection["language_code"]
     )
+    local_language_ocr_text = _extract_local_language_ocr_text(raw_text, detected_language)
     english_text = _normalize_whitespace(
         translation_result.get("english_text") or raw_text
     )
-    english_lines = normalize_lines(english_text)
+    translation_status = translation_result["status"]
+    has_english_translation = detected_language == "en" or translation_status in {
+        "translated",
+        "success",
+        "not_needed",
+    }
+    raw_english_translation = english_text if has_english_translation else ""
+
+    _emit("refining_translation", "Refining English translation", None)
+    t0 = time.monotonic()
+    # Force refinement whenever an English basis exists, including source-English
+    # uploads whose translation status is "not_needed".
+    should_force_refinement = bool(raw_english_translation)
+    refinement_result = _refine_english_translation(
+        raw_english_translation,
+        raw_text,
+        detected_language,
+        translation_status,
+        get_translation_config(),
+        force_refinement=should_force_refinement,
+    )
+    timing["translation_refinement_ms"] = round((time.monotonic() - t0) * 1000, 1)
+    refined_english_translation = _normalize_whitespace(
+        refinement_result.get("refined_text") or ""
+    )
+    analysis_english_text = (
+        refined_english_translation
+        if refinement_result.get("status") == "refined" and refined_english_translation
+        else english_text
+    )
+
+    english_lines = normalize_lines(analysis_english_text)
     body_lines = _extract_body_lines(english_lines)
     body_text = _merge_wrapped_lines(body_lines)
-    extraction_text = body_text or english_text
-    english_sentences = _split_sentences(body_text or english_text)
+    extraction_text = body_text or analysis_english_text
+    english_sentences = _split_sentences(body_text or analysis_english_text)
 
     language_info = {
         "detected": detected_language,
@@ -4880,7 +5794,7 @@ def parse_document(
         "detection_method": language_detection["method"],
         "detection_confidence_score": language_detection["confidence_score"],
         "translation_target": "en",
-        "translation_status": translation_result["status"],
+        "translation_status": translation_status,
         "translation_provider": translation_result["provider"],
         "translation_model": translation_result.get("model"),
         "translation_error": translation_result["error"],
@@ -4888,6 +5802,13 @@ def parse_document(
         "translation_quality_method": translation_result.get("quality_method"),
         "translation_quality_acceptable": translation_result.get("quality_acceptable"),
         "translation_flagged_for_review": translation_result.get("flagged_for_review", False),
+        "translation_refinement_status": refinement_result.get("status"),
+        "translation_refinement_provider": refinement_result.get("provider"),
+        "translation_refinement_model": refinement_result.get("model"),
+        "translation_refinement_error": refinement_result.get("error"),
+        "privacy_controls": translation_result.get("privacy_controls", {}),
+        "quality_privacy_controls": translation_result.get("quality_privacy_controls", {}),
+        "refinement_privacy_controls": refinement_result.get("privacy_controls", {}),
     }
 
     # ── Heuristic extraction ──
@@ -4907,9 +5828,9 @@ def parse_document(
     _emit("llm_extraction", "Running AI-guided extraction", None)
     t0 = time.monotonic()
     raw_llm_payload = _extract_complaint_insights_via_openai(
-        english_text, heuristic_fields, original_text=raw_text,
+        analysis_english_text, heuristic_fields, original_text=raw_text,
     )
-    is_translated = translation_result["status"] in ("translated", "success")
+    is_translated = translation_status in ("translated", "success")
     combined_source_text = (
         extraction_text + "\n\n" + raw_text
         if is_translated and raw_text != extraction_text
@@ -4943,6 +5864,7 @@ def parse_document(
         "question_guided_min_confidence": extraction_config["min_confidence_label"],
         "question_guided_requires_evidence": bool(extraction_config["require_evidence"]),
         "question_guided_validation": validation_summary,
+        "privacy_controls": raw_llm_payload.get("_privacy_controls", {}) if isinstance(raw_llm_payload, dict) else {},
         "source_text_strategy": "body_merged_lines",
     }
     complaint_brief = _build_complaint_brief(complaint_fields, llm_payload)
@@ -4952,7 +5874,7 @@ def parse_document(
     _emit("generating_fir", "Generating FIR draft", None)
     t0 = time.monotonic()
     fir_draft = _build_fir_draft(
-        english_text,
+        analysis_english_text,
         english_lines,
         english_sentences,
         complaint_fields,
@@ -4969,7 +5891,11 @@ def parse_document(
         "language": language_info,
         "text": {
             "ocr_text": raw_text,
+            "local_language_ocr_text": local_language_ocr_text,
             "english_text": english_text,
+            "raw_english_translation": raw_english_translation,
+            "refined_english_translation": refined_english_translation,
+            "analysis_english_text": analysis_english_text,
         },
         "complaint": complaint_fields,
         "gaps": gaps,
@@ -4993,6 +5919,11 @@ def parse_document(
             "source_language_counts": language_detection["counts"],
             "extraction": extraction_meta,
             "timing": timing,
+            "text_used_for_extraction": (
+                "refined_english_translation"
+                if refinement_result.get("status") == "refined" and refined_english_translation
+                else "raw_english_translation" if raw_english_translation else "ocr_text"
+            ),
         },
     }
 

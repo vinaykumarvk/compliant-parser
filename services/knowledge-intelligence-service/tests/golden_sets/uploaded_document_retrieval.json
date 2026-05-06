@@ -1,0 +1,13 @@
+{
+  "name": "uploaded_document_retrieval",
+  "cases": [
+    {
+      "query": "uploaded complaint road accident injury",
+      "expected_sources": ["vector", "wiki", "fact"]
+    },
+    {
+      "query": "motorcycle stolen theft BNS-303 dishonest taking movable property",
+      "expected_legal_reference": "BNS-303"
+    }
+  ]
+}

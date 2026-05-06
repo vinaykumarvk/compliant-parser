@@ -23,6 +23,7 @@ __all__ = [
     "detect_language_enhanced",
     "detect_urdu",
     "get_acknowledgement_status",
+    "build_ocr_review_payload",
     "requires_acknowledgement",
     "tag_segment_confidence",
 ]
@@ -230,6 +231,24 @@ def get_acknowledgement_status(document_id: str) -> Optional[dict]:
 def requires_acknowledgement(segments: List[dict]) -> bool:
     """Return ``True`` if any segment has ``Low`` confidence."""
     return any(seg.get("confidence") == "Low" for seg in segments)
+
+
+def build_ocr_review_payload(document_id: str, extracted_text: str, original_label: str = "") -> dict:
+    """Build the three-pane OCR review payload expected by the UI."""
+    language = detect_language_enhanced(extracted_text)
+    segments = tag_segment_confidence(extracted_text, source="ocr")
+    return {
+        "document_id": document_id,
+        "language": language,
+        "panes": {
+            "original": {"label": original_label or document_id},
+            "extracted_text": extracted_text,
+            "english_translation": extracted_text if language["language"] == "en" else "[translation pending review]",
+        },
+        "segments": segments,
+        "requires_acknowledgement": requires_acknowledgement(segments),
+        "latency_target_ms_per_page": 5000,
+    }
 
 
 # =========================================================================

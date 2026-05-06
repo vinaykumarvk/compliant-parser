@@ -112,6 +112,7 @@ class TestGenerateDocument(AsyncTestCase):
         )
         self.assertIn("id", doc)
         self.assertIn("content", doc)
+        self.assertRegex(doc["sha256"], r"^[0-9a-f]{64}$")
         self.assertIn("auto_filled_fields", doc)
         self.assertIn("case_number", doc["auto_filled_fields"])
 
@@ -135,10 +136,13 @@ class TestUpdateGeneratedDocument(AsyncTestCase):
         self.doc = await generate_document(self.template_id, {}, "u1", db=self.db)
 
     async def test_update_content(self):
+        previous_hash = self.doc["sha256"]
         updated = await update_generated_document(
             self.doc["id"], "New content here", "u1", db=self.db,
         )
         self.assertEqual(updated["content"], "New content here")
+        self.assertRegex(updated["sha256"], r"^[0-9a-f]{64}$")
+        self.assertNotEqual(updated["sha256"], previous_hash)
         self.assertTrue(updated["io_edited"])
 
 

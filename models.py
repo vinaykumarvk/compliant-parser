@@ -7,7 +7,7 @@ soft-delete support, and portable enum handling.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any, List, Optional
 
@@ -59,6 +59,9 @@ def _apply_column_defaults(target: Any, args: Any, kwargs: dict) -> None:
 # ---------------------------------------------------------------------------
 
 class UserRole(str, Enum):
+    Senior_Command = "Senior_Command"
+    Zone_Officer = "Zone_Officer"
+    SHO = "SHO"
     IO = "IO"
     Clerk = "Clerk"
     AI_Admin = "AI_Admin"
@@ -72,11 +75,15 @@ class CaseType(str, Enum):
 
 
 class CaseStatus(str, Enum):
-    Open = "Open"
+    Complaint_Received = "Complaint_Received"
+    FIR_Registered = "FIR_Registered"
     Under_Investigation = "Under_Investigation"
     Charge_Sheet_Filed = "Charge_Sheet_Filed"
-    Closed = "Closed"
+    Closure_Report_Filed = "Closure_Report_Filed"
+    Court_Proceedings = "Court_Proceedings"
     Transferred = "Transferred"
+    Disposed = "Disposed"
+    Closed_No_FIR = "Closed_No_FIR"
 
 
 class CCTNSSyncStatus(str, Enum):
@@ -290,6 +297,7 @@ class PoliceStation(AuditMixin, Base):
     )
     name: Mapped[str] = mapped_column(sa.String, nullable=False)
     district: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    zone: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     city: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     state: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     is_active: Mapped[bool] = mapped_column(
@@ -339,6 +347,8 @@ class User(AuditMixin, Base):
     police_station_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("police_stations.id"), nullable=True,
     )
+    jurisdiction_scope: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    jurisdiction_ids: Mapped[Optional[list]] = mapped_column(sa.JSON, nullable=True)
     role: Mapped[UserRole] = mapped_column(
         sa.Enum(UserRole, name="userrole", create_constraint=True, native_enum=False),
         nullable=False,
@@ -397,7 +407,7 @@ class Case(AuditMixin, Base):
     )
     status: Mapped[CaseStatus] = mapped_column(
         sa.Enum(CaseStatus, name="casestatus", create_constraint=True, native_enum=False),
-        default=CaseStatus.Open,
+        default=CaseStatus.Complaint_Received,
         nullable=False,
     )
     cctns_sync_status: Mapped[CCTNSSyncStatus] = mapped_column(
@@ -419,6 +429,7 @@ class Case(AuditMixin, Base):
     secondary_offence_type_ids: Mapped[Optional[list]] = mapped_column(
         sa.JSON, nullable=True,
     )
+    petition_analysis: Mapped[Optional[dict]] = mapped_column(sa.JSON, nullable=True)
 
     # relationships
     police_station: Mapped[Optional[PoliceStation]] = relationship(
@@ -470,6 +481,9 @@ class CaseDocument(AuditMixin, Base):
     )
     file_name: Mapped[str] = mapped_column(sa.String, nullable=False)
     file_path: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    file_storage_uri: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    file_storage_provider: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True)
+    file_encryption_key_ref: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     file_size_bytes: Mapped[Optional[int]] = mapped_column(sa.BigInteger, nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     sha256_hash: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True)
@@ -739,6 +753,7 @@ class GeneratedDocument(AuditMixin, Base):
     )
     document_subtype: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     generated_content: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    sha256_hash: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True)
     auto_filled_fields: Mapped[Optional[dict]] = mapped_column(sa.JSON, nullable=True)
     io_edited: Mapped[bool] = mapped_column(
         sa.Boolean, default=False, nullable=False,
@@ -755,6 +770,9 @@ class GeneratedDocument(AuditMixin, Base):
     )
     signed_at: Mapped[Optional[datetime]] = mapped_column(
         sa.DateTime(timezone=True), nullable=True,
+    )
+    signature_certificate_details: Mapped[Optional[dict]] = mapped_column(
+        sa.JSON, nullable=True,
     )
 
     # relationships
@@ -904,6 +922,12 @@ class KnowledgeBaseEntry(AuditMixin, Base):
         default=KBEntryStatus.Draft,
         nullable=False,
     )
+    validation_status: Mapped[Optional[str]] = mapped_column(sa.String(32), nullable=True)
+    validation_report: Mapped[Optional[dict]] = mapped_column(sa.JSON, nullable=True)
+    validated_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    validated_at: Mapped[Optional[datetime]] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True,
+    )
     promoted_by: Mapped[Optional[str]] = mapped_column(
         ForeignKey("users.id"), nullable=True,
     )
@@ -917,6 +941,9 @@ class KnowledgeBaseEntry(AuditMixin, Base):
     # relationships
     promoted_by_user: Mapped[Optional[User]] = relationship(
         foreign_keys=[promoted_by],
+    )
+    validated_by_user: Mapped[Optional[User]] = relationship(
+        foreign_keys=[validated_by],
     )
     previous_version: Mapped[Optional[KnowledgeBaseEntry]] = relationship(
         remote_side="KnowledgeBaseEntry.id",
@@ -947,6 +974,8 @@ class AuditLog(Base):
     action_details: Mapped[Optional[dict]] = mapped_column(sa.JSON, nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    previous_hash: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True)
+    entry_hash: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True),
         server_default=sa.func.now(),
@@ -1041,3 +1070,212 @@ class UsageEvent(AuditMixin, Base):
 
     # relationships
     user: Mapped[Optional[User]] = relationship(back_populates="usage_events")
+
+
+# ---------------------------------------------------------------------------
+# 20. DashboardMetricDefinition
+# ---------------------------------------------------------------------------
+
+class DashboardMetricDefinition(AuditMixin, Base):
+    __tablename__ = "dashboard_metric_definitions"
+
+    id: Mapped[str] = _pk_uuid()
+    metric_key: Mapped[str] = mapped_column(sa.String, nullable=False)
+    display_name: Mapped[str] = mapped_column(sa.String, nullable=False)
+    owner_role: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    permitted_use: Mapped[str] = mapped_column(sa.String, nullable=False)
+    prohibited_use: Mapped[str] = mapped_column(sa.String, nullable=False)
+    confidence_tier: Mapped[str] = mapped_column(sa.String, default="Medium", nullable=False)
+    minimum_sample_size: Mapped[int] = mapped_column(sa.Integer, default=1, nullable=False)
+    source_tables: Mapped[Optional[list]] = mapped_column(sa.JSON, nullable=True)
+    exclusions: Mapped[Optional[list]] = mapped_column(sa.JSON, nullable=True)
+    version: Mapped[int] = mapped_column(sa.Integer, default=1, nullable=False)
+    is_active: Mapped[bool] = mapped_column(sa.Boolean, default=True, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# 21. DashboardMetricSourceMap
+# ---------------------------------------------------------------------------
+
+class DashboardMetricSourceMap(AuditMixin, Base):
+    __tablename__ = "dashboard_metric_source_maps"
+
+    id: Mapped[str] = _pk_uuid()
+    metric_key: Mapped[str] = mapped_column(sa.String, nullable=False)
+    primary_source: Mapped[str] = mapped_column(sa.String, nullable=False)
+    secondary_source: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    confidence_rule: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    conflict_policy: Mapped[str] = mapped_column(sa.Text, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# 22. DashboardMetricSnapshot
+# ---------------------------------------------------------------------------
+
+class DashboardMetricSnapshot(AuditMixin, Base):
+    __tablename__ = "dashboard_metric_snapshots"
+
+    id: Mapped[str] = _pk_uuid()
+    metric_key: Mapped[str] = mapped_column(sa.String, nullable=False)
+    period: Mapped[str] = mapped_column(sa.String, nullable=False)
+    scope_type: Mapped[str] = mapped_column(sa.String, nullable=False)
+    scope_id: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    filters_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    filters: Mapped[dict] = mapped_column(sa.JSON, nullable=False)
+    payload: Mapped[dict] = mapped_column(sa.JSON, nullable=False)
+    metric_definition_version: Mapped[int] = mapped_column(sa.Integer, default=1, nullable=False)
+    source_watermark_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    computed_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    status: Mapped[str] = mapped_column(sa.String, default="Current", nullable=False)
+    error_code: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# 23. DashboardSavedView
+# ---------------------------------------------------------------------------
+
+class DashboardSavedView(AuditMixin, Base):
+    __tablename__ = "dashboard_saved_views"
+
+    id: Mapped[str] = _pk_uuid()
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(sa.String, nullable=False)
+    filters: Mapped[dict] = mapped_column(sa.JSON, nullable=False)
+    is_default: Mapped[bool] = mapped_column(sa.Boolean, default=False, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# 24. DashboardAlertRule
+# ---------------------------------------------------------------------------
+
+class DashboardAlertRule(AuditMixin, Base):
+    __tablename__ = "dashboard_alert_rules"
+
+    id: Mapped[str] = _pk_uuid()
+    metric_key: Mapped[str] = mapped_column(sa.String, nullable=False)
+    scope_type: Mapped[str] = mapped_column(sa.String, default="all", nullable=False)
+    threshold_operator: Mapped[str] = mapped_column(sa.String, nullable=False)
+    threshold_value: Mapped[float] = mapped_column(sa.Float, nullable=False)
+    period: Mapped[str] = mapped_column(sa.String, default="weekly", nullable=False)
+    severity: Mapped[str] = mapped_column(sa.String, default="warning", nullable=False)
+    notification_channels: Mapped[Optional[list]] = mapped_column(sa.JSON, nullable=True)
+    minimum_sample_size: Mapped[int] = mapped_column(sa.Integer, default=5, nullable=False)
+    is_active: Mapped[bool] = mapped_column(sa.Boolean, default=True, nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# 25. DashboardAlertInstance
+# ---------------------------------------------------------------------------
+
+class DashboardAlertInstance(AuditMixin, Base):
+    __tablename__ = "dashboard_alert_instances"
+
+    id: Mapped[str] = _pk_uuid()
+    rule_id: Mapped[Optional[str]] = mapped_column(ForeignKey("dashboard_alert_rules.id"), nullable=True)
+    metric_key: Mapped[str] = mapped_column(sa.String, nullable=False)
+    observed_value: Mapped[Optional[float]] = mapped_column(sa.Float, nullable=True)
+    threshold_value: Mapped[Optional[float]] = mapped_column(sa.Float, nullable=True)
+    period: Mapped[str] = mapped_column(sa.String, nullable=False)
+    scope_type: Mapped[str] = mapped_column(sa.String, nullable=False)
+    scope_id: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    severity: Mapped[str] = mapped_column(sa.String, default="warning", nullable=False)
+    status: Mapped[str] = mapped_column(sa.String, default="open", nullable=False)
+    recommended_action: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    acknowledged_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    acknowledged_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# 26. DashboardExportJob
+# ---------------------------------------------------------------------------
+
+class DashboardExportJob(AuditMixin, Base):
+    __tablename__ = "dashboard_export_jobs"
+
+    id: Mapped[str] = _pk_uuid()
+    requester_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    report_type: Mapped[str] = mapped_column(sa.String, nullable=False)
+    export_format: Mapped[str] = mapped_column(sa.String, nullable=False)
+    status: Mapped[str] = mapped_column(sa.String, default="queued", nullable=False)
+    filters: Mapped[dict] = mapped_column(sa.JSON, nullable=False)
+    scope: Mapped[dict] = mapped_column(sa.JSON, nullable=False)
+    file_uri: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    sha256_hash: Mapped[Optional[str]] = mapped_column(sa.String(64), nullable=True)
+    watermark: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# 27. DashboardMetricDispute
+# ---------------------------------------------------------------------------
+
+class DashboardMetricDispute(AuditMixin, Base):
+    __tablename__ = "dashboard_metric_disputes"
+
+    id: Mapped[str] = _pk_uuid()
+    metric_key: Mapped[str] = mapped_column(sa.String, nullable=False)
+    scope_type: Mapped[str] = mapped_column(sa.String, nullable=False)
+    scope_id: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    disputed_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reason_code: Mapped[str] = mapped_column(sa.String, nullable=False)
+    explanation: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    status: Mapped[str] = mapped_column(sa.String, default="open", nullable=False)
+    reviewer_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    resolution_notes: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# 28. DashboardMetricCorrection
+# ---------------------------------------------------------------------------
+
+class DashboardMetricCorrection(AuditMixin, Base):
+    __tablename__ = "dashboard_metric_corrections"
+
+    id: Mapped[str] = _pk_uuid()
+    dispute_id: Mapped[str] = mapped_column(ForeignKey("dashboard_metric_disputes.id"), nullable=False)
+    metric_key: Mapped[str] = mapped_column(sa.String, nullable=False)
+    original_value: Mapped[Optional[dict]] = mapped_column(sa.JSON, nullable=True)
+    corrected_value: Mapped[dict] = mapped_column(sa.JSON, nullable=False)
+    approved_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+# ---------------------------------------------------------------------------
+# 29. DashboardTrainingRecommendation
+# ---------------------------------------------------------------------------
+
+class DashboardTrainingRecommendation(AuditMixin, Base):
+    __tablename__ = "dashboard_training_recommendations"
+
+    id: Mapped[str] = _pk_uuid()
+    scope_type: Mapped[str] = mapped_column(sa.String, nullable=False)
+    scope_id: Mapped[Optional[str]] = mapped_column(sa.String, nullable=True)
+    metric_key: Mapped[str] = mapped_column(sa.String, nullable=False)
+    evidence: Mapped[dict] = mapped_column(sa.JSON, nullable=False)
+    suggested_topic: Mapped[str] = mapped_column(sa.String, nullable=False)
+    status: Mapped[str] = mapped_column(sa.String, default="open", nullable=False)
+    reviewed_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    dismissed_until: Mapped[Optional[datetime]] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# 30. DashboardValidationState
+# ---------------------------------------------------------------------------
+
+class DashboardValidationState(AuditMixin, Base):
+    __tablename__ = "dashboard_validation_states"
+
+    id: Mapped[str] = _pk_uuid()
+    feature_key: Mapped[str] = mapped_column(sa.String, nullable=False)
+    state: Mapped[str] = mapped_column(sa.String, default="restricted", nullable=False)
+    approved_by: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    findings: Mapped[Optional[dict]] = mapped_column(sa.JSON, nullable=True)

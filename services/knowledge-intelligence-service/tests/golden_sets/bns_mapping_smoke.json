@@ -1,0 +1,10 @@
+{
+  "name": "bns_mapping_smoke",
+  "cases": [
+    {
+      "complaint_text": "My motorcycle was stolen from the parking area.",
+      "expected_sections": ["BNS-303"],
+      "expected_sources": ["vector", "wiki", "fact"]
+    }
+  ]
+}

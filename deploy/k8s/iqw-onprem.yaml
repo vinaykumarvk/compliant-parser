@@ -1,0 +1,195 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: iqw
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: iqw-app-config
+  namespace: iqw
+data:
+  APP_ENV: production
+  IQW_OCR_PROVIDER: self_hosted
+  IQW_LLM_PROVIDER: self_hosted
+  OBJECT_STORAGE_PROVIDER: minio
+  MINIO_ENDPOINT: http://minio.iqw.svc.cluster.local:9000
+  MINIO_BUCKET: iqw-documents
+  OPENSEARCH_URL: http://opensearch.iqw.svc.cluster.local:9200
+  REDIS_URL: redis://redis.iqw.svc.cluster.local:6379/0
+  IQW_JOB_BACKEND: redis
+  PGVECTOR_ENABLED: "true"
+  EXTERNAL_AI_API_APPROVED: "false"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: iqw-app-secrets
+  namespace: iqw
+type: Opaque
+stringData:
+  APP_ADMIN_USERNAME: operator
+  APP_ADMIN_PASSWORD: replace-me
+  APP_SESSION_SECRET: replace-with-32-plus-random-bytes
+  JWT_SECRET_KEY: replace-with-separate-32-plus-random-bytes
+  DATABASE_URL: postgresql+asyncpg://iqw:replace-me@postgres-rw.iqw.svc.cluster.local:5432/iqw
+  MINIO_ACCESS_KEY: replace-me
+  MINIO_SECRET_KEY: replace-me
+  IQW_SELF_HOSTED_OCR_URL: http://ocr-gateway.iqw.svc.cluster.local/ocr
+  IQW_SELF_HOSTED_LLM_URL: http://llm-gateway.iqw.svc.cluster.local
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iqw-app
+  namespace: iqw
+  labels:
+    app: iqw-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: iqw-app
+  template:
+    metadata:
+      labels:
+        app: iqw-app
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.local/iqw/compliant-parser:replace-tag
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: iqw-app-config
+            - secretRef:
+                name: iqw-app-secrets
+          env:
+            - name: WEB_CONCURRENCY
+              value: "2"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: iqw-app
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iqw-app
+  namespace: iqw
+spec:
+  selector:
+    app: iqw-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: iqw-app
+  namespace: iqw
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: iqw-app
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: iqw-app
+  namespace: iqw
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: iqw-app
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: iqw-app-egress
+  namespace: iqw
+spec:
+  podSelector:
+    matchLabels:
+      app: iqw-app
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 9000
+        - protocol: TCP
+          port: 9200
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443

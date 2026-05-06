@@ -10,16 +10,19 @@ from __future__ import annotations
 import re
 import uuid
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_CHECKLISTS",
+    "INVESTIGATION_QUESTIONS",
     "classify_trial_risk",
     "evaluate_checklist_item",
     "generate_suggestion",
     "run_quality_check",
+    "run_llm_quality_check",
     "seed_checklists",
 ]
 
@@ -75,8 +78,542 @@ DEFAULT_CHECKLISTS: Dict[str, List[Dict[str, str]]] = {
     ],
 }
 
+# ---------------------------------------------------------------------------
+# Investigation questions — structured per-category for LLM semantic analysis
+# ---------------------------------------------------------------------------
+INVESTIGATION_QUESTIONS: Dict[str, List[Dict[str, Any]]] = {
+    "Generic": [
+        {
+            "id": "identity",
+            "label": "Complainant / Victim Identity",
+            "trial_impact": "Failure to establish victim identity can lead to case dismissal.",
+            "questions": [
+                {"q": "Is the complainant's full name recorded (including father's/spouse's name)?", "severity": "High"},
+                {"q": "Is the complainant's complete residential address provided?", "severity": "High"},
+                {"q": "Are contact details (phone/mobile) mentioned?", "severity": "Medium"},
+                {"q": "Is age, gender, or occupation stated?", "severity": "Low"},
+            ],
+        },
+        {
+            "id": "location",
+            "label": "Place of Occurrence",
+            "trial_impact": "Imprecise location weakens scene-of-crime evidence and jurisdiction.",
+            "questions": [
+                {"q": "Is the place of occurrence described with enough detail to identify it?", "severity": "High"},
+                {"q": "Are nearby landmarks, road names, or shop names mentioned?", "severity": "Medium"},
+                {"q": "Is there a GPS coordinate, survey number, or pin code?", "severity": "Low"},
+            ],
+        },
+        {
+            "id": "timeline",
+            "label": "Date & Time of Incident",
+            "trial_impact": "Missing timeline undermines alibis and corroboration.",
+            "questions": [
+                {"q": "Is the date of the incident recorded?", "severity": "High"},
+                {"q": "Is the approximate or exact time stated?", "severity": "High"},
+                {"q": "Is there a delay between occurrence and reporting — if so, is it explained?", "severity": "Medium"},
+            ],
+        },
+        {
+            "id": "accused",
+            "label": "Accused / Suspect Details",
+            "trial_impact": "Unidentified accused makes arrest and charge-sheet difficult.",
+            "questions": [
+                {"q": "Is the accused named, or is a physical description provided?", "severity": "High"},
+                {"q": "Are identification marks, aliases, or known associates mentioned?", "severity": "Medium"},
+                {"q": "Is the accused's last known address or workplace noted?", "severity": "Medium"},
+            ],
+        },
+        {
+            "id": "narrative",
+            "label": "Incident Narrative",
+            "trial_impact": "Vague narrative fails to establish actus reus and mens rea.",
+            "questions": [
+                {"q": "Is the sequence of events described in the complainant's own words?", "severity": "High"},
+                {"q": "Are specific criminal acts (assault, theft, threat, etc.) described?", "severity": "High"},
+                {"q": "Are dialogues, threats, or demands quoted?", "severity": "Medium"},
+            ],
+        },
+        {
+            "id": "property",
+            "label": "Property / Loss",
+            "trial_impact": "Unspecified property weakens theft/robbery charges.",
+            "questions": [
+                {"q": "Is stolen/damaged property listed with descriptions?", "severity": "Medium"},
+                {"q": "Are estimated values or serial numbers/IMEI provided?", "severity": "Medium"},
+            ],
+        },
+        {
+            "id": "witnesses",
+            "label": "Witnesses",
+            "trial_impact": "No witnesses weakens prosecution's corroboration.",
+            "questions": [
+                {"q": "Are any witnesses named?", "severity": "Medium"},
+                {"q": "Are witness contact details or addresses provided?", "severity": "Medium"},
+            ],
+        },
+        {
+            "id": "evidence",
+            "label": "Evidence",
+            "trial_impact": "Undocumented evidence may be inadmissible.",
+            "questions": [
+                {"q": "Is physical or digital evidence mentioned (CCTV, photos, documents)?", "severity": "Medium"},
+                {"q": "Is there mention of evidence collection or preservation?", "severity": "Low"},
+            ],
+        },
+        {
+            "id": "injuries",
+            "label": "Injuries / Medical",
+            "trial_impact": "Missing injury details weaken assault/hurt charges.",
+            "questions": [
+                {"q": "Are injuries described or a medical report referenced?", "severity": "Medium"},
+                {"q": "Is the nature and severity of injuries stated?", "severity": "Medium"},
+            ],
+        },
+        {
+            "id": "verification",
+            "label": "Verification & Signature",
+            "trial_impact": "Unsigned documents may be challenged for authenticity.",
+            "questions": [
+                {"q": "Is a signature, thumb impression, or attestation present?", "severity": "Medium"},
+                {"q": "Is the investigating officer's name and designation recorded?", "severity": "High"},
+            ],
+        },
+    ],
+    "FIR": [
+        {
+            "id": "registration",
+            "label": "FIR Registration Details",
+            "trial_impact": "Missing registration data invalidates the FIR as a legal document.",
+            "questions": [
+                {"q": "Is the FIR number recorded?", "severity": "High"},
+                {"q": "Is the police station name mentioned?", "severity": "High"},
+                {"q": "Are applicable sections of law (BNS/IPC) cited?", "severity": "High"},
+                {"q": "Is the cognizable/non-cognizable classification stated?", "severity": "High"},
+                {"q": "Is the time of registration vs time of occurrence noted?", "severity": "Medium"},
+            ],
+        },
+    ],
+    "Witness_Statement": [
+        {
+            "id": "witness_identity",
+            "label": "Witness Identity & Relationship",
+            "trial_impact": "Unverified witness identity undermines testimony credibility.",
+            "questions": [
+                {"q": "Is the witness's full name and address recorded?", "severity": "High"},
+                {"q": "Is the witness's relationship to complainant/accused stated?", "severity": "Medium"},
+            ],
+        },
+        {
+            "id": "witness_account",
+            "label": "Witness Account",
+            "trial_impact": "Vague witness account cannot corroborate prosecution's version.",
+            "questions": [
+                {"q": "Does the witness describe what they personally saw or heard?", "severity": "High"},
+                {"q": "Are specific details (time, place, persons) mentioned in the account?", "severity": "High"},
+            ],
+        },
+        {
+            "id": "witness_procedure",
+            "label": "Statement Procedure",
+            "trial_impact": "Procedural lapses make the statement vulnerable to defence objections.",
+            "questions": [
+                {"q": "Is it stated that the statement was recorded under oath?", "severity": "High"},
+                {"q": "Is cross-examination readiness noted?", "severity": "Low"},
+            ],
+        },
+    ],
+    "Charge_Sheet": [
+        {
+            "id": "cs_accused",
+            "label": "Accused Identification (Charge Sheet)",
+            "trial_impact": "Incomplete accused details may cause court to reject the charge sheet.",
+            "questions": [
+                {"q": "Is each accused listed with full identification details?", "severity": "High"},
+                {"q": "Are arrest/bail details mentioned for each accused?", "severity": "High"},
+            ],
+        },
+        {
+            "id": "cs_evidence",
+            "label": "Evidence Summary (Charge Sheet)",
+            "trial_impact": "Missing evidence summary weakens prosecution's case.",
+            "questions": [
+                {"q": "Is a summary of collected evidence provided?", "severity": "High"},
+                {"q": "Are forensic/scientific reports attached or referenced?", "severity": "Medium"},
+            ],
+        },
+        {
+            "id": "cs_witnesses",
+            "label": "Prosecution Witnesses (Charge Sheet)",
+            "trial_impact": "Unlisted witnesses cannot be examined during trial.",
+            "questions": [
+                {"q": "Is a list of prosecution witnesses provided?", "severity": "High"},
+            ],
+        },
+        {
+            "id": "cs_jurisdiction",
+            "label": "Jurisdiction & Filing",
+            "trial_impact": "Wrong jurisdiction leads to case transfer or dismissal.",
+            "questions": [
+                {"q": "Is the court of jurisdiction specified?", "severity": "High"},
+                {"q": "Is the filing deadline or submission date mentioned?", "severity": "High"},
+            ],
+        },
+    ],
+}
+
+
+# ---------------------------------------------------------------------------
+# LLM system prompt for semantic quality analysis
+# ---------------------------------------------------------------------------
+_QUALITY_SYSTEM_PROMPT = """\
+You are a senior Indian police investigation quality analyst. Your task is to \
+evaluate an investigation document against a set of structured quality questions.
+
+CRITICAL INSTRUCTIONS:
+- Look for SEMANTIC meaning, not keywords. A shop address IS a place of \
+occurrence. A person's name with "S/o" IS an identity. A date mentioned in \
+the narrative IS a timeline.
+- Quote EXACT text from the document as excerpts — do not paraphrase.
+- Do NOT fabricate findings. If information is genuinely absent, say so.
+- Assess trial impact from the prosecution's perspective.
+- For each question, determine: "complete" (clearly present), "partial" \
+(some info but incomplete), or "not_found" (absent).
+- For each category, give an overall status: "complete" if all questions are \
+complete, "partial" if any are partial or some not_found, "not_found" if all \
+are not_found.
+
+Respond with ONLY valid JSON matching the required schema.\
+"""
+
+_QUALITY_USER_TEMPLATE = """\
+Document type: {document_type}
+Document text (first 8000 chars):
+---
+{document_text}
+---
+
+Investigation questions by category:
+{questions_json}
+
+Required JSON response schema:
+{{
+  "categories": [
+    {{
+      "id": "<category id>",
+      "label": "<category label>",
+      "status": "complete | partial | not_found",
+      "summary": "<1-2 sentence summary of what was found or missing>",
+      "findings": [
+        {{
+          "question": "<the question text>",
+          "answer": "<brief answer based on document>",
+          "excerpt": "<exact quote from document or null>",
+          "status": "complete | partial | not_found"
+        }}
+      ],
+      "gaps": ["<specific missing information>"],
+      "io_actions": ["<specific action the IO should take>"],
+      "trial_impact": "<how gaps affect trial prospects>"
+    }}
+  ],
+  "overall_readiness": "Ready | Needs_Work | Incomplete",
+  "investigation_readiness_score": 0.0 to 1.0,
+  "priority_actions": ["<most urgent IO actions>"],
+  "strengths": ["<well-documented aspects>"]
+}}\
+"""
+
+
+_CASE_CONTEXT_SECTION = """\
+CASE CONTEXT (from petition intake):
+The following facts were extracted from the source petition. Use this context to
+INFORM your evaluation. If a checklist item is answered by the petition context,
+mark it "complete" and cite the petition context as the source. Do NOT mark items
+as "not_found" when the petition context clearly provides the information.
+
+Petition-extracted metadata:
+{context_json}
+"""
+
+OFFENCE_SPECIFIC_QUESTIONS: Dict[str, List[Dict[str, Any]]] = {
+    "Theft": [
+        {
+            "id": "theft_specifics",
+            "label": "Theft-Specific Investigation Points",
+            "trial_impact": "Missing property details or entry method weakens theft prosecution under IPC 379/380.",
+            "questions": [
+                {"q": "Is the stolen property described with specifics (make, model, serial number, value)?", "severity": "High"},
+                {"q": "Is the mode of entry or method of theft described?", "severity": "High"},
+                {"q": "Has a property list or seizure memo been prepared?", "severity": "Medium"},
+            ],
+        },
+    ],
+    "Robbery": [
+        {
+            "id": "robbery_specifics",
+            "label": "Robbery-Specific Investigation Points",
+            "trial_impact": "Missing evidence of force or threat weakens robbery charge under IPC 392.",
+            "questions": [
+                {"q": "Is there evidence of force, threat, or intimidation described?", "severity": "High"},
+                {"q": "Are weapons or instruments used in the robbery described?", "severity": "High"},
+                {"q": "Are injuries to the victim documented with medical evidence?", "severity": "Medium"},
+            ],
+        },
+    ],
+    "Cheating": [
+        {
+            "id": "cheating_specifics",
+            "label": "Cheating-Specific Investigation Points",
+            "trial_impact": "Missing evidence of dishonest inducement weakens cheating charge under IPC 420.",
+            "questions": [
+                {"q": "Is the false representation or promise described with specifics?", "severity": "High"},
+                {"q": "Is the financial loss or property delivered quantified?", "severity": "High"},
+                {"q": "Are documentary evidences (receipts, agreements, messages) collected or referenced?", "severity": "Medium"},
+            ],
+        },
+    ],
+}
+
+
+def _get_investigation_questions(document_type: str, offence_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return merged investigation questions for *document_type*.
+
+    Type-specific categories are listed first, followed by Generic categories
+    whose ``id`` is not already covered.
+    """
+    generic = INVESTIGATION_QUESTIONS.get("Generic", [])
+    type_specific = INVESTIGATION_QUESTIONS.get(document_type)
+    if not type_specific:
+        base = list(generic)
+    else:
+        seen_ids = {cat["id"] for cat in type_specific}
+        base = list(type_specific)
+        for cat in generic:
+            if cat["id"] not in seen_ids:
+                base.append(cat)
+                seen_ids.add(cat["id"])
+
+    # Merge offence-specific questions if available
+    if offence_type:
+        offence_cats = OFFENCE_SPECIFIC_QUESTIONS.get(offence_type, [])
+        existing_ids = {cat["id"] for cat in base}
+        for cat in offence_cats:
+            if cat["id"] not in existing_ids:
+                base.append(cat)
+                existing_ids.add(cat["id"])
+    return base
+
+
+def _normalize_llm_quality_result(
+    data: Dict[str, Any],
+    document_type: str,
+    questions: List[Dict[str, Any]],
+    latency_ms: int,
+    meta: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Validate and normalize LLM output into canonical quality result.
+
+    Builds backward-compatible flat ``findings`` alongside the richer
+    ``categories`` structure.
+    """
+    categories = data.get("categories", [])
+    overall_readiness = data.get("overall_readiness", "Needs_Work")
+    readiness_score = data.get("investigation_readiness_score", 0.5)
+    priority_actions = data.get("priority_actions", [])
+    strengths = data.get("strengths", [])
+
+    # Build flat findings for backward compatibility
+    flat_findings: List[Dict[str, Any]] = []
+    present_count = 0
+    weak_count = 0
+    missing_count = 0
+
+    _status_map = {"complete": "present", "partial": "weak", "not_found": "missing"}
+
+    for cat in categories:
+        cat_id = cat.get("id", "")
+        cat_label = cat.get("label", "")
+        for finding in cat.get("findings", []):
+            raw_status = finding.get("status", "not_found")
+            mapped_status = _status_map.get(raw_status, "missing")
+            # Determine severity from question definitions
+            severity = "Medium"
+            for q_cat in questions:
+                if q_cat["id"] == cat_id:
+                    for q in q_cat.get("questions", []):
+                        if q["q"] == finding.get("question"):
+                            severity = q.get("severity", "Medium")
+                            break
+                    break
+
+            flat_finding = {
+                "item": finding.get("question", ""),
+                "severity": severity,
+                "category": cat_label,
+                "status": mapped_status,
+                "excerpt": finding.get("excerpt"),
+                "char_start": None,
+                "char_end": None,
+                "citation": {
+                    "citation_id": str(uuid.uuid4()),
+                    "excerpt": finding.get("excerpt"),
+                    "char_start": None,
+                    "char_end": None,
+                    "purpose": "supporting_excerpt" if mapped_status != "missing" else "absence_check",
+                    "click_target": None,
+                },
+                "suggestion": finding.get("answer", ""),
+            }
+            flat_findings.append(flat_finding)
+
+            if mapped_status == "present":
+                present_count += 1
+            elif mapped_status == "weak":
+                weak_count += 1
+            else:
+                missing_count += 1
+
+    total_items = len(flat_findings)
+    completeness_score = round(present_count / total_items, 2) if total_items else 0.0
+
+    trial_risk_indicators = _derive_trial_risks_from_categories(categories)
+
+    analysis_id = str(uuid.uuid4())
+
+    return {
+        "analysis_id": analysis_id,
+        "document_type": document_type,
+        "checklist_used": "semantic_llm",
+        "checklist_note": None,
+        "analysis_mode": "semantic",
+        # New rich structure
+        "categories": categories,
+        "overall_readiness": overall_readiness,
+        "investigation_readiness_score": readiness_score,
+        "priority_actions": priority_actions,
+        "strengths": strengths,
+        # Backward-compatible flat structure
+        "findings": flat_findings,
+        "suppressed_uncited_findings": [],
+        "trial_risk_indicators": trial_risk_indicators,
+        "completeness_score": completeness_score,
+        "confidence_score": readiness_score,
+        "latency_ms": latency_ms,
+        "latency_target_ms": QUALITY_LATENCY_TARGET_MS,
+        "latency_within_target": latency_ms < QUALITY_LATENCY_TARGET_MS,
+        "total_items": total_items,
+        "present_count": present_count,
+        "weak_count": weak_count,
+        "missing_count": missing_count,
+        "llm_meta": meta,
+    }
+
+
+def _derive_trial_risks_from_categories(categories: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """Build trial risk indicators from category gaps."""
+    risks: List[Dict[str, str]] = []
+    for cat in categories:
+        status = cat.get("status", "complete")
+        if status == "complete":
+            continue
+        gaps = cat.get("gaps", [])
+        trial_impact = cat.get("trial_impact", "")
+        label = cat.get("label", "Unknown")
+        severity = "High" if status == "not_found" else "Medium"
+
+        if gaps:
+            for gap in gaps:
+                risks.append({
+                    "risk": f"{label}: {gap}",
+                    "severity": severity,
+                })
+        elif trial_impact:
+            risks.append({
+                "risk": f"{label}: {trial_impact}",
+                "severity": severity,
+            })
+    return risks
+
+
+def run_llm_quality_check(
+    document_text: str,
+    document_type: str,
+    offence_type: Optional[str] = None,
+    case_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Run LLM-powered semantic quality check with keyword fallback.
+
+    On LLM unavailability or error, silently falls back to the keyword-based
+    :func:`run_quality_check`.
+    """
+    import json as _json
+
+    started = time.perf_counter()
+    questions = _get_investigation_questions(document_type, offence_type=offence_type)
+
+    # Truncate document for LLM context
+    truncated_text = document_text[:8000] if document_text else ""
+    if not truncated_text.strip():
+        return run_quality_check(document_text, document_type, offence_type)
+
+    # Build questions payload (strip to essentials)
+    q_payload = []
+    for cat in questions:
+        q_payload.append({
+            "id": cat["id"],
+            "label": cat["label"],
+            "trial_impact": cat["trial_impact"],
+            "questions": [{"q": q["q"], "severity": q["severity"]} for q in cat["questions"]],
+        })
+
+    user_prompt_text = _QUALITY_USER_TEMPLATE.format(
+        document_type=document_type,
+        document_text=truncated_text,
+        questions_json=_json.dumps(q_payload, indent=2, ensure_ascii=False),
+    )
+
+    if case_context:
+        context_section = _CASE_CONTEXT_SECTION.format(
+            context_json=_json.dumps(case_context, indent=2, ensure_ascii=False, default=str)
+        )
+        user_prompt_text = context_section + "\n" + user_prompt_text
+
+    try:
+        from ai_workflows import _llm_json
+        llm_data, meta = _llm_json(
+            _QUALITY_SYSTEM_PROMPT,
+            {"system": _QUALITY_SYSTEM_PROMPT, "user": user_prompt_text},
+            task="quality_check",
+        )
+    except Exception:
+        logger.info("LLM unavailable for quality check — falling back to keyword engine.")
+        return run_quality_check(document_text, document_type, offence_type)
+
+    if llm_data is None:
+        # Stub mode — fall back to keyword engine
+        logger.info("LLM returned stub — falling back to keyword engine.")
+        return run_quality_check(document_text, document_type, offence_type)
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+
+    try:
+        result = _normalize_llm_quality_result(llm_data, document_type, questions, latency_ms, meta)
+    except Exception:
+        logger.exception("Failed to normalize LLM quality result — falling back.")
+        return run_quality_check(document_text, document_type, offence_type)
+
+    logger.info(
+        "Semantic quality check: type=%s, readiness=%s, score=%.2f, categories=%d",
+        document_type, result.get("overall_readiness"), result.get("completeness_score", 0), len(result.get("categories", [])),
+    )
+    return result
+
+
 # In-memory store used at runtime (populated by seed_checklists)
 _checklist_store: Dict[str, List[Dict[str, str]]] = {}
+GENERIC_CHECKLIST_NOTE = "Generic checklist applied. Contact AI Admin for offence-specific checklists."
+QUALITY_LATENCY_TARGET_MS = 10_000
 
 # ---------------------------------------------------------------------------
 # Seeding
@@ -357,6 +894,9 @@ def run_quality_check(
     document_text: str,
     document_type: str,
     offence_type: Optional[str] = None,
+    checklist_override: Optional[List[Dict[str, str]]] = None,
+    checklist_note: Optional[str] = None,
+    case_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run a full quality check on *document_text*.
 
@@ -376,12 +916,15 @@ def run_quality_check(
     dict
         A results dict containing findings, scores, and risk indicators.
     """
-    base_checklist = _get_checklist(document_type)
-    checklist_name = document_type if document_type in _checklist_store else "Generic"
+    started = time.perf_counter()
+    base_checklist = checklist_override or _get_checklist(document_type)
+    checklist_name = "KnowledgeBaseEntry" if checklist_override else (document_type if document_type in _checklist_store else "Generic")
 
     # For typed documents, merge the Generic checklist with the
     # type-specific one so the IO gets comprehensive coverage.
-    if checklist_name != "Generic":
+    if checklist_override:
+        checklist = list(base_checklist)
+    elif checklist_name != "Generic":
         generic = _get_checklist("Generic")
         seen_categories = {entry["category"] for entry in base_checklist}
         merged = list(base_checklist)
@@ -406,14 +949,32 @@ def run_quality_check(
         result = evaluate_checklist_item(item_text, document_text)
         suggestion = generate_suggestion(item_text, result["status"], category)
 
+        excerpt = result["excerpt"]
+        char_start = result["char_start"]
+        char_end = result["char_end"]
+        if not excerpt:
+            excerpt = document_text[:240].strip() or "[empty document]"
+            char_start = 0
+            char_end = min(len(document_text), 240)
+
+        citation = {
+            "citation_id": str(uuid.uuid4()),
+            "excerpt": excerpt,
+            "char_start": char_start,
+            "char_end": char_end,
+            "purpose": "supporting_excerpt" if result["status"] != "missing" else "absence_check",
+            "click_target": f"excerpt:{char_start or 0}-{char_end or 0}",
+        }
+
         finding = {
             "item": item_text,
             "severity": severity,
             "category": category,
             "status": result["status"],
-            "excerpt": result["excerpt"],
-            "char_start": result["char_start"],
-            "char_end": result["char_end"],
+            "excerpt": excerpt,
+            "char_start": char_start,
+            "char_end": char_end,
+            "citation": citation,
             "suggestion": suggestion,
         }
         findings.append(finding)
@@ -431,6 +992,7 @@ def run_quality_check(
     trial_risk_indicators = classify_trial_risk(findings)
 
     analysis_id = str(uuid.uuid4())
+    latency_ms = int((time.perf_counter() - started) * 1000)
 
     logger.info(
         "Quality check %s: type=%s, score=%.2f, present=%d, weak=%d, missing=%d",
@@ -442,10 +1004,15 @@ def run_quality_check(
         "analysis_id": analysis_id,
         "document_type": document_type,
         "checklist_used": checklist_name,
+        "checklist_note": checklist_note or (GENERIC_CHECKLIST_NOTE if checklist_name == "Generic" else None),
         "findings": findings,
+        "suppressed_uncited_findings": [],
         "trial_risk_indicators": trial_risk_indicators,
         "completeness_score": completeness_score,
         "confidence_score": confidence_score,
+        "latency_ms": latency_ms,
+        "latency_target_ms": QUALITY_LATENCY_TARGET_MS,
+        "latency_within_target": latency_ms < QUALITY_LATENCY_TARGET_MS,
         "total_items": total_items,
         "present_count": present_count,
         "weak_count": weak_count,

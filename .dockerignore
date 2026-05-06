@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 *.log
 .venv/
+.object-storage/
 .env
 .env.*
 !.env.example

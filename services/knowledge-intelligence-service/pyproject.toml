@@ -1,0 +1,19 @@
+[project]
+name = "knowledge-intelligence-service"
+version = "0.1.0"
+description = "Reusable domain-scoped knowledge intelligence service"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.135.1",
+  "uvicorn[standard]>=0.42.0",
+  "sqlalchemy[asyncio]>=2.0.41",
+  "asyncpg>=0.31.0",
+  "aiosqlite>=0.21.0",
+  "cloud-sql-python-connector[asyncpg]>=1.16.0",
+  "cryptography>=43.0.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

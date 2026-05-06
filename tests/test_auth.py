@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import time
 import unittest
+import os
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
+
+os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-not-for-production")
 
 from auth import (
     PERMISSIONS,
@@ -93,7 +96,7 @@ class TestAccountLockout(unittest.TestCase):
             record_failed_attempt("emp-001")
         with self.assertRaises(HTTPException) as ctx:
             check_lockout("emp-001")
-        self.assertEqual(ctx.exception.status_code, 401)
+        self.assertEqual(ctx.exception.status_code, 423)
 
     def test_clear_resets_count(self):
         for _ in range(4):
@@ -118,8 +121,8 @@ class TestPermissions(unittest.TestCase):
     def test_io_can_create_case(self):
         self.assertIn("IO", PERMISSIONS["create_case"])
 
-    def test_clerk_cannot_create_case(self):
-        self.assertNotIn("Clerk", PERMISSIONS["create_case"])
+    def test_clerk_can_create_case(self):
+        self.assertIn("Clerk", PERMISSIONS["create_case"])
 
     def test_system_admin_can_manage_users(self):
         self.assertIn("System_Admin", PERMISSIONS["manage_users"])
