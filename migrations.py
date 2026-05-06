@@ -568,6 +568,14 @@ async def _migration_case_petition_analysis(conn: AsyncConnection) -> None:
     await _add_column_if_missing(conn, "cases", "petition_analysis", "petition_analysis JSON")
 
 
+async def _migration_section_recommendation_enhanced_fields(conn: AsyncConnection) -> None:
+    if not await _table_exists(conn, "section_recommendations"):
+        return
+    await _add_column_if_missing(conn, "section_recommendations", "applicability_rank", "applicability_rank INTEGER")
+    await _add_column_if_missing(conn, "section_recommendations", "statutory_text", "statutory_text TEXT")
+    await _add_column_if_missing(conn, "section_recommendations", "ingredient_mapping", "ingredient_mapping JSON")
+
+
 MIGRATIONS: list[tuple[str, Migration]] = [
     ("20260504_001_parse_record_object_storage", _migration_parse_record_object_storage),
     ("20260504_002_case_document_object_storage", _migration_case_document_object_storage),
@@ -587,6 +595,7 @@ MIGRATIONS: list[tuple[str, Migration]] = [
     ("20260506_004_petition_assistance_phase6", _migration_petition_assistance_phase6),
     ("20260506_005_petition_checklist_intelligence", _migration_petition_checklist_intelligence),
     ("20260506_006_case_petition_analysis", _migration_case_petition_analysis),
+    ("20260507_001_section_recommendation_enhanced_fields", _migration_section_recommendation_enhanced_fields),
 ]
 
 
