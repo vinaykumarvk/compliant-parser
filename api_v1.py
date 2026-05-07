@@ -44,7 +44,6 @@ from cases import (
     generate_case_identifiers,
     get_case,
     get_lifecycle_map,
-    get_stage_guidance,
     list_cases,
     purge_old_document_versions,
     seed_demo_case,
@@ -3146,7 +3145,6 @@ from ocr_enhancements import (  # noqa: E402
     build_ocr_review_payload,
     detect_language_enhanced,
     get_acknowledgement_status,
-    tag_segment_confidence,
 )
 
 
