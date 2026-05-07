@@ -9,10 +9,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from tests.conftest import AsyncTestCase
 
 from audit import (
+    AUDIT_RETENTION_YEARS,
     compute_sha256,
     get_audit_log,
     infer_action_type,
     log_audit_event,
+    purge_expired_audit_logs,
     _redacted_session_id,
     search_audit_logs,
     verify_audit_chain,
@@ -220,6 +222,23 @@ class TestGetAuditLog(AsyncTestCase):
 # ---------------------------------------------------------------------------
 # Immutability contract
 # ---------------------------------------------------------------------------
+
+class TestAuditRetentionPurge(AsyncTestCase):
+    """AC-019-5: Verify audit retention purge automation."""
+
+    async def test_purge_returns_summary(self):
+        result = await purge_expired_audit_logs(db=self.db)
+        self.assertIn("purged", result)
+        self.assertIn("cutoff", result)
+        self.assertEqual(result["retention_years"], AUDIT_RETENTION_YEARS)
+
+    async def test_purge_zero_when_no_expired(self):
+        await log_audit_event(
+            user_id="u1", action_type="Login", entity_type="User", entity_id="u1", db=self.db,
+        )
+        result = await purge_expired_audit_logs(db=self.db)
+        self.assertEqual(result["purged"], 0)
+
 
 class TestAuditImmutability(AsyncTestCase):
     """Verify no update/delete operations exist for audit logs."""

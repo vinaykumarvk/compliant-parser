@@ -45,3 +45,19 @@ self.addEventListener("fetch", (event) => {
     );
   }
 });
+
+// ---------------------------------------------------------------------------
+// Background Sync — AC-003-5: auto-upload queued documents when back online
+// ---------------------------------------------------------------------------
+self.addEventListener("sync", (event) => {
+  if (event.tag === "document-upload") {
+    event.waitUntil(
+      self.clients.matchAll().then((clients) => {
+        if (clients.length > 0) {
+          // Notify the active page to run the sync (it holds the auth token)
+          clients[0].postMessage({ type: "sync-offline-uploads" });
+        }
+      })
+    );
+  }
+});

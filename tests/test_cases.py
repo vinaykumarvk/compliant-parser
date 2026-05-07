@@ -40,6 +40,7 @@ from cases import (
     suggest_case_intake_from_petition,
     transition_case_status,
     update_case,
+    update_case_offence_type,
     update_task,
     validate_crime_no,
     validate_petition_no,
@@ -150,6 +151,14 @@ class TestCaseCRUD(AsyncTestCase):
         self.assertIsNotNone(found)
         self.assertEqual(found["id"], case["id"])
 
+    async def test_get_case_includes_offence_type_name(self):
+        """AC-002-3: offence type name must be in case dict for dashboard header display."""
+        case = await create_case(
+            {"case_type": "FIR", "crime_no": "0015/2026"}, "u1", self.db
+        )
+        found = await get_case(case["id"], self.db)
+        self.assertIn("primary_offence_type_name", found)
+
     async def test_get_nonexistent_case(self):
         self.assertIsNone(await get_case("nonexistent", self.db))
 
@@ -173,6 +182,19 @@ class TestCaseCRUD(AsyncTestCase):
         )
         updated = await update_case(case["id"], {"brief_facts": "Updated facts"}, "u1", self.db)
         self.assertEqual(updated["brief_facts"], "Updated facts")
+
+    async def test_update_case_offence_type(self):
+        """AC-002-4: IO can modify offence type during investigation."""
+        case = await create_case(
+            {"case_type": "FIR", "crime_no": "0016/2026"}, "u1", self.db
+        )
+        updated = await update_case_offence_type(
+            case["id"],
+            primary_offence_type_id="ot-theft",
+            user_id="u1",
+            db=self.db,
+        )
+        self.assertEqual(updated["primary_offence_type_id"], "ot-theft")
 
     async def test_ai_suggested_field_edit_is_audited(self):
         case = await create_case(
@@ -688,6 +710,70 @@ class TestAllStageGuidance(AsyncTestCase):
             self.assertIsInstance(g["expected_documents"], list)
             self.assertGreaterEqual(len(g["expected_actions"]), 1)
             self.assertIn("Terminal", g["next_hint"])
+
+
+class TestCrimeNoUniqueness(AsyncTestCase):
+    """BR-001-1: Crime number unique within police station/year.
+    EC-001-1: Duplicate crime number exact error."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.db.clear()
+
+    async def test_duplicate_crime_no_same_station_raises(self):
+        """BR-001-1: Duplicate crime_no at same police station raises 409."""
+        from fastapi import HTTPException
+
+        await create_case(
+            {"case_type": "FIR", "crime_no": "0090/2026", "police_station_id": "PS_001"},
+            "u1", self.db,
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            await create_case(
+                {"case_type": "FIR", "crime_no": "0090/2026", "police_station_id": "PS_001"},
+                "u2", self.db,
+            )
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    async def test_duplicate_crime_no_exact_error_message(self):
+        """EC-001-1: Exact CONFLICT error message with crime number."""
+        from fastapi import HTTPException
+
+        await create_case(
+            {"case_type": "FIR", "crime_no": "0091/2026", "police_station_id": "PS_001"},
+            "u1", self.db,
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            await create_case(
+                {"case_type": "FIR", "crime_no": "0091/2026", "police_station_id": "PS_001"},
+                "u2", self.db,
+            )
+        self.assertIn("already exists", str(ctx.exception.detail))
+        self.assertIn("0091/2026", str(ctx.exception.detail))
+
+    async def test_same_crime_no_different_station_allowed(self):
+        """BR-001-1: Same crime_no at different police stations is allowed."""
+        c1 = await create_case(
+            {"case_type": "FIR", "crime_no": "0092/2026", "police_station_id": "PS_001"},
+            "u1", self.db,
+        )
+        c2 = await create_case(
+            {"case_type": "FIR", "crime_no": "0092/2026", "police_station_id": "PS_002"},
+            "u1", self.db,
+        )
+        self.assertNotEqual(c1["id"], c2["id"])
+
+    async def test_same_crime_no_different_year_allowed(self):
+        """BR-001-1: Same crime_no sequence in different years is allowed."""
+        c1 = await create_case(
+            {"case_type": "FIR", "crime_no": "0093/2025", "police_station_id": "PS_001"},
+            "u1", self.db,
+        )
+        c2 = await create_case(
+            {"case_type": "FIR", "crime_no": "0093/2026", "police_station_id": "PS_001"},
+            "u1", self.db,
+        )
+        self.assertNotEqual(c1["id"], c2["id"])
 
 
 class TestPetitionAnalysisPersistence(AsyncTestCase):

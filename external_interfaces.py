@@ -62,12 +62,14 @@ class ObjectStorageClient(Protocol):
         ...
 
 
-@dataclass(frozen=True)
+@dataclass
 class OCRResult:
     text: str
     provider: str
     page_count: Optional[int] = None
     confidence: Optional[float] = None
+    latency_ms: Optional[float] = None
+    latency_within_target: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -287,26 +289,56 @@ def run_self_hosted_ocr(
     )
 
 
+OCR_LATENCY_TARGET_MS = 5000  # BRD: p95 < 5s per page
+
+_ocr_latency_log: list = []  # recent OCR latency samples for p95 tracking
+
+
 def run_configured_ocr(
     content: bytes,
     *,
     file_name: str = "",
     mime_type: Optional[str] = None,
 ) -> OCRResult:
-    """Run OCR using the configured BRD/RFQ-compliant provider order."""
+    """Run OCR using the configured BRD/RFQ-compliant provider order.
+
+    Measures wall-clock latency and attaches ``latency_ms`` and
+    ``latency_within_target`` to the returned :class:`OCRResult`.
+    """
+    import time
+    import logging as _log
+
+    t0 = time.perf_counter()
     provider = (_env("IQW_OCR_PROVIDER") or "auto").lower().replace("-", "_")
     if provider == "auto":
         provider = "self_hosted" if _env("IQW_SELF_HOSTED_OCR_URL") else "google_document_ai"
+    result: Optional[OCRResult] = None
     if provider in {"self_hosted", "internal"}:
         try:
-            return run_self_hosted_ocr(content, file_name=file_name, mime_type=mime_type)
+            result = run_self_hosted_ocr(content, file_name=file_name, mime_type=mime_type)
         except ExternalServiceUnavailable:
             fallback = (_env("IQW_OCR_FALLBACK_PROVIDER") or "").lower().replace("-", "_")
             if fallback not in {"google", "google_document_ai"}:
                 raise
-    if provider in {"google", "google_document_ai"} or (_env("IQW_OCR_FALLBACK_PROVIDER") or "").lower().replace("-", "_") in {"google", "google_document_ai"}:
-        return run_google_document_ai_ocr(content, file_name=file_name, mime_type=mime_type)
-    raise ExternalServiceUnavailable(f"Unsupported OCR provider '{provider}'.")
+    if result is None:
+        if provider in {"google", "google_document_ai"} or (_env("IQW_OCR_FALLBACK_PROVIDER") or "").lower().replace("-", "_") in {"google", "google_document_ai"}:
+            result = run_google_document_ai_ocr(content, file_name=file_name, mime_type=mime_type)
+        else:
+            raise ExternalServiceUnavailable(f"Unsupported OCR provider '{provider}'.")
+
+    # AC-011-5: measure and persist latency
+    latency_ms = (time.perf_counter() - t0) * 1000
+    result.latency_ms = latency_ms
+    result.latency_within_target = latency_ms < OCR_LATENCY_TARGET_MS
+    _ocr_latency_log.append(latency_ms)
+    if len(_ocr_latency_log) > 200:
+        _ocr_latency_log[:] = _ocr_latency_log[-100:]
+    if not result.latency_within_target:
+        _log.getLogger(__name__).warning(
+            "OCR latency %.0fms exceeds target %dms for %s",
+            latency_ms, OCR_LATENCY_TARGET_MS, file_name,
+        )
+    return result
 
 
 class StubExternalClient:
@@ -613,16 +645,21 @@ class LiveLLMClient:
 
     def __init__(self) -> None:
         provider = (_env("IQW_LLM_PROVIDER") or "auto").lower()
+        # BR-007-2: When self-hosted is required, prevent cloud fallback
+        self._require_self_hosted = _is_true("IQW_REQUIRE_SELF_HOSTED_LLM", False)
         if provider == "auto":
-            provider = (
-                "self_hosted"
-                if _env("IQW_SELF_HOSTED_LLM_URL")
-                else "openai"
-                if _env("OPENAI_API_KEY")
-                else "gemini"
-                if _env("GEMINI_API_KEY")
-                else "stub"
-            )
+            if self._require_self_hosted:
+                provider = "self_hosted"
+            else:
+                provider = (
+                    "self_hosted"
+                    if _env("IQW_SELF_HOSTED_LLM_URL")
+                    else "openai"
+                    if _env("OPENAI_API_KEY")
+                    else "gemini"
+                    if _env("GEMINI_API_KEY")
+                    else "stub"
+                )
         provider = provider.replace("-", "_")
         self.provider = provider
         self.self_hosted_url = (_env("IQW_SELF_HOSTED_LLM_URL", "") or "").rstrip("/")

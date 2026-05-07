@@ -16,8 +16,10 @@ from external_interfaces import ExternalServiceError, ExternalServiceUnavailable
 from models import (
     AIAnalysisResult,
     Case,
+    CaseActivity,
     CaseDocument,
     CongruenceAlert,
+    GeneratedDocument,
     InvestigationPlan,
     JudgmentAnalysis,
     KnowledgeBaseEntry,
@@ -711,25 +713,54 @@ async def usage_analytics(filters: dict, user: dict, db: AsyncSession) -> dict:
     docs = (await db.execute(select(CaseDocument))).scalars().all()
     analyses = (await db.execute(select(AIAnalysisResult))).scalars().all()
     events = (await db.execute(select(UsageEvent))).scalars().all()
+    # AC-016-1: Count generated documents from DB
+    gen_docs = (await db.execute(select(GeneratedDocument))).scalars().all()
+    gen_doc_count = len([gd for gd in gen_docs if gd.case_id in case_ids])
+
+    # AC-016-2: Compute average time per case from activities
+    activities = (await db.execute(select(CaseActivity))).scalars().all()
+    case_activities = [a for a in activities if a.case_id in case_ids]
+    avg_minutes_per_case = 0.0
+    avg_minutes_per_activity = 0.0
+    if cases:
+        # Estimate case duration from first to last activity
+        durations = []
+        for case in cases:
+            acts = sorted(
+                [a for a in case_activities if a.case_id == case.id],
+                key=lambda a: a.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            )
+            if len(acts) >= 2:
+                delta = (acts[-1].created_at - acts[0].created_at).total_seconds() / 60
+                durations.append(delta)
+        if durations:
+            avg_minutes_per_case = round(sum(durations) / len(durations), 1)
+        if case_activities:
+            avg_minutes_per_activity = round(avg_minutes_per_case / max(len(case_activities) / max(len(cases), 1), 1), 1)
+
+    # AC-016-3: Compute feature usage frequency with proper grouping
+    usage_counts: dict = {}
+    for event in events:
+        key = event.module or event.event_type or "unknown"
+        usage_counts[key] = usage_counts.get(key, 0) + 1
+    feature_usage = [{"module": k, "count": v} for k, v in sorted(usage_counts.items(), key=lambda x: -x[1])]
+
     return {
         "totals": {
             "cases_created": len(cases),
             "documents_uploaded": len([doc for doc in docs if doc.case_id in case_ids]),
             "ai_checks_performed": len([item for item in analyses if item.case_id in case_ids]),
-            "documents_generated": 0,
+            "documents_generated": gen_doc_count,
         },
         "breakdowns": {
             "cases_by_io": {case.io_id or "unassigned": len([c for c in cases if c.io_id == case.io_id]) for case in cases},
             "cases_by_police_station": {case.police_station_id or "unassigned": len([c for c in cases if c.police_station_id == case.police_station_id]) for case in cases},
         },
         "time_spent": {
-            "average_minutes_per_case": 0,
-            "average_minutes_per_activity": 0,
+            "average_minutes_per_case": avg_minutes_per_case,
+            "average_minutes_per_activity": avg_minutes_per_activity,
         },
-        "feature_usage_frequency": [
-            {"module": event.module or event.event_type, "count": len([e for e in events if e.module == event.module])}
-            for event in events
-        ],
+        "feature_usage_frequency": feature_usage,
         "filters_applied": filters,
         "scope": "own" if user.get("role") == "IO" else "all",
     }

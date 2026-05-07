@@ -13,6 +13,8 @@ services:
         condition: service_healthy
       opensearch:
         condition: service_healthy
+      ocr-gateway:
+        condition: service_healthy
     ports:
       - "8080:8080"
     environment:
@@ -34,6 +36,7 @@ services:
       IQW_SELF_HOSTED_OCR_URL: ${IQW_SELF_HOSTED_OCR_URL:-http://ocr-gateway:8080/ocr}
       IQW_LLM_PROVIDER: self_hosted
       IQW_SELF_HOSTED_LLM_URL: ${IQW_SELF_HOSTED_LLM_URL:-http://llm-gateway:8000}
+      IQW_REQUIRE_SELF_HOSTED_LLM: "true"
       EXTERNAL_AI_API_APPROVED: "false"
     restart: unless-stopped
 
@@ -95,8 +98,33 @@ services:
       timeout: 5s
       retries: 10
 
+  # BR-011-2: Self-hosted TrOCR/Donut OCR gateway
+  ocr-gateway:
+    image: ${IQW_OCR_GATEWAY_IMAGE:-ghcr.io/iqw/ocr-gateway:latest}
+    environment:
+      OCR_MODEL: ${IQW_OCR_MODEL:-microsoft/trocr-base-printed}
+      OCR_FALLBACK_MODEL: ${IQW_OCR_FALLBACK_MODEL:-naver-clova-ix/donut-base}
+      OCR_DEVICE: ${IQW_OCR_DEVICE:-cpu}
+      OCR_MAX_BATCH_SIZE: "4"
+      OCR_TIMEOUT_SECONDS: "120"
+    ports:
+      - "8081:8080"
+    volumes:
+      - ocr-models:/models
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health >/dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
 volumes:
   postgres-data:
   minio-data:
   opensearch-data:
   redis-data:
+  ocr-models:

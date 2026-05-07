@@ -187,6 +187,72 @@ class TestExportPdf(AsyncTestCase):
         self.assertTrue(data[:5] == b"%PDF-")
 
 
+class TestSignGeneratedDocument(AsyncTestCase):
+    """AC-018-2: DSC token detection, AC-018-3: signed status records, AC-018-4: missing DSC error."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        await seed_templates(self.db)
+        templates = await list_templates(db=self.db)
+        tid = templates[0]["id"]
+        self.doc = await generate_document(tid, {"case_number": "0001/2026"}, "u1", db=self.db)
+
+    async def test_missing_dsc_token_raises_exact_error(self):
+        """AC-018-4: Missing DSC token exact error message."""
+        from document_generator import sign_generated_document
+        from unittest.mock import patch as mock_patch
+
+        with mock_patch.dict(os.environ, {"DSC_TOKEN_PRESENT": ""}, clear=False):
+            with self.assertRaises(RuntimeError) as ctx:
+                await sign_generated_document(self.doc["id"], "u1", "1234", db=self.db)
+            self.assertIn("Digital Signature Certificate not detected", str(ctx.exception))
+            self.assertIn("insert your DSC token", str(ctx.exception))
+
+    async def test_sign_requires_pin(self):
+        """AC-018-2: DSC PIN is required."""
+        from document_generator import sign_generated_document
+        from unittest.mock import patch as mock_patch
+
+        with mock_patch.dict(os.environ, {"DSC_TOKEN_PRESENT": "true"}, clear=False):
+            with self.assertRaises(ValueError) as ctx:
+                await sign_generated_document(self.doc["id"], "u1", None, db=self.db)
+            self.assertIn("PIN is required", str(ctx.exception))
+
+    async def test_sign_records_signer_timestamp_certificate(self):
+        """AC-018-3: Signed status records signer, timestamp, and certificate details."""
+        from document_generator import sign_generated_document
+        from unittest.mock import patch as mock_patch
+
+        with mock_patch.dict(os.environ, {
+            "DSC_TOKEN_PRESENT": "true",
+            "DSC_CERT_SUBJECT": "CN=Test Officer",
+            "DSC_CERT_SERIAL": "SN-12345",
+            "DSC_PROVIDER": "Test DSC Bridge",
+        }, clear=False):
+            result = await sign_generated_document(self.doc["id"], "u1", "9999", db=self.db)
+
+        self.assertEqual(result["digital_signature_status"], "Signed")
+        self.assertEqual(result["signed_by"], "u1")
+        self.assertIsNotNone(result.get("signed_at"))
+        cert = result.get("signature_certificate_details", {})
+        self.assertEqual(cert["certificate_subject"], "CN=Test Officer")
+        self.assertEqual(cert["certificate_serial"], "SN-12345")
+        self.assertEqual(cert["provider"], "Test DSC Bridge")
+        self.assertIn("document_sha256", cert)
+
+    async def test_signed_doc_is_read_only(self):
+        """AC-018-5 (re-verify): Signed documents cannot be edited."""
+        from document_generator import sign_generated_document
+        from unittest.mock import patch as mock_patch
+
+        with mock_patch.dict(os.environ, {"DSC_TOKEN_PRESENT": "true"}, clear=False):
+            await sign_generated_document(self.doc["id"], "u1", "1234", db=self.db)
+
+        with self.assertRaises(ValueError) as ctx:
+            await update_generated_document(self.doc["id"], "Modified content", "u1", db=self.db)
+        self.assertIn("read-only", str(ctx.exception))
+
+
 if __name__ == "__main__":
     import unittest
     unittest.main()

@@ -106,6 +106,19 @@ class TestAIBoundary(unittest.TestCase):
 
         self.assertIn("requires written external-AI approval", str(ctx.exception))
 
+    def test_require_self_hosted_llm_forces_self_hosted_provider(self):
+        """BR-007-2: IQW_REQUIRE_SELF_HOSTED_LLM forces self_hosted even without URL."""
+        with patch.dict(
+            os.environ,
+            {
+                "IQW_REQUIRE_SELF_HOSTED_LLM": "true",
+                "OPENAI_API_KEY": "test-key",
+            },
+            clear=True,
+        ):
+            client = LiveLLMClient()
+            self.assertEqual(client.provider, "self_hosted")
+
     def test_configured_ocr_uses_self_hosted_gateway(self):
         def fake_urlopen(request, timeout=0, context=None):
             self.assertEqual(request.full_url, "https://ocr.internal/process")
@@ -127,6 +140,10 @@ class TestAIBoundary(unittest.TestCase):
         self.assertEqual(result.provider, "self_hosted")
         self.assertEqual(result.text, "recognized text")
         self.assertEqual(result.page_count, 1)
+        # AC-011-5: latency measurement added to OCR pipeline
+        self.assertIsNotNone(result.latency_ms)
+        self.assertIsInstance(result.latency_ms, float)
+        self.assertIsNotNone(result.latency_within_target)
         self.assertEqual(result.confidence, 0.93)
 
     def test_production_google_document_ai_requires_approval_before_call(self):

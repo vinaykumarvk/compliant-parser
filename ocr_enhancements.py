@@ -233,17 +233,33 @@ def requires_acknowledgement(segments: List[dict]) -> bool:
     return any(seg.get("confidence") == "Low" for seg in segments)
 
 
-def build_ocr_review_payload(document_id: str, extracted_text: str, original_label: str = "") -> dict:
-    """Build the three-pane OCR review payload expected by the UI."""
+def build_ocr_review_payload(
+    document_id: str,
+    extracted_text: str,
+    original_label: str = "",
+    english_translation: Optional[str] = None,
+) -> dict:
+    """Build the three-pane OCR review payload expected by the UI.
+
+    If *english_translation* is supplied it is used directly; otherwise
+    the pane falls back to the extracted text (when already English) or
+    a pending-review placeholder.
+    """
     language = detect_language_enhanced(extracted_text)
     segments = tag_segment_confidence(extracted_text, source="ocr")
+    if english_translation is not None:
+        translation_text = english_translation
+    elif language["language"] == "en":
+        translation_text = extracted_text
+    else:
+        translation_text = "[translation pending review]"
     return {
         "document_id": document_id,
         "language": language,
         "panes": {
             "original": {"label": original_label or document_id},
             "extracted_text": extracted_text,
-            "english_translation": extracted_text if language["language"] == "en" else "[translation pending review]",
+            "english_translation": translation_text,
         },
         "segments": segments,
         "requires_acknowledgement": requires_acknowledgement(segments),

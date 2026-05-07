@@ -59,6 +59,7 @@ from document_generator import (
 )
 from ocr_enhancements import (
     _acknowledgements,
+    build_ocr_review_payload,
     detect_urdu,
     detect_language_enhanced,
     tag_segment_confidence,
@@ -482,6 +483,16 @@ class TestCrossModuleIntegration(AsyncTestCase):
         self.assertEqual(lang["language"], "ur")
         segments = tag_segment_confidence(urdu_text)
         self.assertGreater(len(segments), 0)
+
+    def test_ocr_review_payload_accepts_translation(self):
+        """AC-011-3: build_ocr_review_payload integrates translation via parameter."""
+        payload = build_ocr_review_payload("doc1", "Urdu text", "file.pdf", english_translation="English text")
+        self.assertEqual(payload["panes"]["english_translation"], "English text")
+
+    def test_ocr_review_payload_english_passthrough(self):
+        """AC-011-3: English text is passed through without translation."""
+        payload = build_ocr_review_payload("doc2", "This is English text.", "file.pdf")
+        self.assertEqual(payload["panes"]["english_translation"], "This is English text.")
 
     async def test_notification_flow(self):
         notif = await create_notification("io1", "assignment", "Case assigned", db=self.db)

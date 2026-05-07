@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from audit import compute_sha256, get_audit_log, log_audit_event, search_audit_logs, verify_audit_chain
+from audit import compute_sha256, get_audit_log, log_audit_event, purge_expired_audit_logs, search_audit_logs, verify_audit_chain
 from external_interfaces import (
     ExternalServiceError,
     ExternalServiceUnavailable,
@@ -49,6 +49,7 @@ from cases import (
     purge_old_document_versions,
     seed_demo_case,
     update_case,
+    update_case_offence_type,
     transition_case_status,
     attach_document,
     attach_documents,
@@ -1115,6 +1116,15 @@ async def get_single_audit_log(
     return entry
 
 
+@audit_log_router.post("/purge-expired")
+async def purge_expired_audit_logs_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_role("System_Admin")),
+) -> dict:
+    """Purge audit log entries older than retention period (AC-019-5). System_Admin only."""
+    return await purge_expired_audit_logs(db=db)
+
+
 async def _ensure_case_document_access(document_id: str, user: dict, db: AsyncSession):
     from models import CaseDocument
 
@@ -1347,6 +1357,25 @@ async def update_case_endpoint(
     await ensure_case_access(case_id, user, db)
     data = body.model_dump(exclude_none=True)
     result = await update_case(case_id, data, user["sub"], db)
+    return result
+
+
+@cases_router.patch("/{case_id}/offence-type")
+async def update_offence_type_endpoint(
+    case_id: str,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+) -> dict:
+    """Update offence classification during investigation (AC-002-4)."""
+    await ensure_case_access(case_id, user, db)
+    result = await update_case_offence_type(
+        case_id,
+        primary_offence_type_id=body.get("primary_offence_type_id"),
+        secondary_offence_type_ids=body.get("secondary_offence_type_ids"),
+        user_id=user["sub"],
+        db=db,
+    )
     return result
 
 
@@ -2920,6 +2949,47 @@ async def analyze_judgment_endpoint(
         raise_api_error(ErrorCode.SERVICE_UNAVAILABLE, str(exc))
 
 
+@admin_router.post("/judgments/{analysis_id}/approve")
+async def approve_judgment_findings_endpoint(
+    analysis_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(require_role("AI_Admin", "System_Admin")),
+) -> dict:
+    """Approve judgment findings and auto-feed proposed checklists to KB (AC-015-6)."""
+    from models import JudgmentAnalysis, KnowledgeBaseEntry
+
+    analysis = await db.get(JudgmentAnalysis, analysis_id)
+    if analysis is None:
+        raise_api_error(ErrorCode.NOT_FOUND, f"Judgment analysis '{analysis_id}' not found.")
+    if analysis.checklist_update_status == "Approved":
+        return {"id": analysis_id, "status": "already_approved", "kb_entries_created": 0}
+
+    analysis.checklist_update_status = "Approved"
+    analysis.approved_by = current_user["sub"]
+
+    kb_entries_created = 0
+    for proposal in (analysis.proposed_checklist_updates or []):
+        entry = KnowledgeBaseEntry(
+            entry_type=proposal.get("type", "Checklist"),
+            title=proposal.get("title", "Judgment-derived checklist item"),
+            content={
+                "items": proposal.get("items", []),
+                "source_judgment_analysis_id": analysis_id,
+                "investigation_lessons": analysis.investigation_lessons,
+                "avoidable_errors": analysis.avoidable_errors,
+            },
+            applicable_offence_types=proposal.get("applicable_offence_types", []),
+            status="Draft",
+            version=1,
+            created_by=current_user["sub"],
+        )
+        db.add(entry)
+        kb_entries_created += 1
+
+    await db.flush()
+    return {"id": analysis_id, "status": "Approved", "kb_entries_created": kb_entries_created}
+
+
 # --- Document Generation Endpoints ---
 
 from document_generator import (  # noqa: E402
@@ -3136,7 +3206,20 @@ async def get_ocr_review_endpoint(
                 raise_api_error(ErrorCode.SERVER_ERROR, str(exc))
         else:
             text = file_bytes.decode("utf-8", errors="replace")
-    payload = build_ocr_review_payload(document_id, text or "", doc.file_name)
+    # AC-011-3: Translate non-English OCR text via existing translation service
+    english_translation = None
+    from ocr_enhancements import detect_language_enhanced
+    detected = detect_language_enhanced(text or "")
+    if detected["language"] != "en" and (text or "").strip():
+        try:
+            from complaint_parsing import _translate_to_english
+            import asyncio
+            tr = await asyncio.to_thread(_translate_to_english, text, detected["language"])
+            if tr.get("status") == "translated" and tr.get("english_text"):
+                english_translation = tr["english_text"]
+        except Exception:
+            pass  # fall back to placeholder
+    payload = build_ocr_review_payload(document_id, text or "", doc.file_name, english_translation=english_translation)
     doc.language_detected = payload["language"]["language"]
     if payload["segments"]:
         doc.ocr_confidence = "Low" if payload["requires_acknowledgement"] else payload["segments"][0]["confidence"]

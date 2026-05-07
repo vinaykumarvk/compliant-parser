@@ -1073,6 +1073,47 @@ async def update_case(case_id: str, data: dict, user_id: str, db: AsyncSession) 
 
 
 # ---------------------------------------------------------------------------
+# Offence type modification (AC-002-4)
+# ---------------------------------------------------------------------------
+
+
+async def update_case_offence_type(
+    case_id: str,
+    primary_offence_type_id: Optional[str],
+    secondary_offence_type_ids: Optional[list] = None,
+    *,
+    user_id: str,
+    db: AsyncSession,
+) -> dict:
+    """Explicitly update offence classification during investigation.
+
+    Returns the updated case dict.  Raises NOT_FOUND if the case does not exist.
+    """
+    case = await db.get(Case, case_id)
+    if case is None:
+        _api_error("NOT_FOUND", f"Case '{case_id}' not found.")
+
+    before_primary = case.primary_offence_type_id
+    before_secondary = case.secondary_offence_type_ids
+
+    case.primary_offence_type_id = primary_offence_type_id
+    if secondary_offence_type_ids is not None:
+        case.secondary_offence_type_ids = secondary_offence_type_ids
+    case.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    await add_activity(
+        case_id,
+        "Offence_Type_Updated",
+        user_id,
+        f"Primary offence changed from {before_primary} to {primary_offence_type_id}.",
+        db=db,
+    )
+    await db.refresh(case, ["primary_offence_type"])
+    return _case_to_dict(case)
+
+
+# ---------------------------------------------------------------------------
 # Status transitions
 # ---------------------------------------------------------------------------
 

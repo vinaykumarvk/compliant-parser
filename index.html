@@ -4359,6 +4359,7 @@
     /* ── Case Detail ── */
     .case-detail-header { display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4); flex-wrap: wrap; }
     .case-detail-header h2 { font-size: 1.15rem; font-weight: 700; margin: 0; }
+    .offence-type-badge { display: inline-block; background: var(--color-bg-accent); color: var(--color-text); font-size: 0.8rem; font-weight: 600; padding: 2px 10px; border-radius: var(--radius-sm); border: 1px solid var(--color-border); }
     .case-detail-back { background: none; border: none; cursor: pointer; color: var(--color-text-muted); padding: var(--space-2); border-radius: var(--radius-sm); display: flex; align-items: center; gap: var(--space-1); font-family: var(--font-body); font-size: 0.85rem; }
     .case-detail-back:hover { color: var(--color-text); background: var(--color-bg-accent); }
     .case-detail-back svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; }
@@ -4406,7 +4407,7 @@
     .stage-guidance-list li { margin-bottom: 2px; }
     .stage-guidance-label { font-size: 0.78rem; font-weight: 600; color: var(--color-text-secondary); margin-top: var(--space-2); }
     .offline-queue { margin: var(--space-3) var(--space-4); padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); }
-    .offline-queue-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: var(--space-3); align-items: center; padding: var(--space-2) 0; border-top: 1px solid var(--color-border); font-size: 0.82rem; }
+    .offline-queue-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto auto; gap: var(--space-3); align-items: center; padding: var(--space-2) 0; border-top: 1px solid var(--color-border); font-size: 0.82rem; }
     .offline-queue-row:first-child { border-top: 0; }
     .offline-queue-status { font-weight: 700; }
 
@@ -5684,6 +5685,7 @@
             Cases
           </button>
           <h2 id="caseDetailTitle">Case</h2>
+          <span id="caseDetailOffenceType" class="offence-type-badge"></span>
           <span id="caseDetailBadge" class="status-badge"></span>
           <div class="case-detail-actions">
             <button id="caseEditBtn" class="btn btn-secondary" type="button">Edit</button>
@@ -5700,6 +5702,7 @@
               <button class="iqw-tab is-active" data-tab="caseTabDetails" role="tab" aria-selected="true" type="button">Details</button>
               <button class="iqw-tab" data-tab="caseTabTimeline" role="tab" aria-selected="false" type="button">Timeline</button>
               <button class="iqw-tab" data-tab="caseTabTasks" role="tab" aria-selected="false" type="button">Tasks</button>
+              <button class="iqw-tab" data-tab="caseTabPlan" role="tab" aria-selected="false" type="button">Plan</button>
               <button class="iqw-tab" data-tab="caseTabAIQuery" role="tab" aria-selected="false" type="button">AI Query</button>
               <button class="iqw-tab" data-tab="caseTabReadiness" role="tab" aria-selected="false" type="button">Readiness</button>
             </div>
@@ -5728,6 +5731,13 @@
                 <select id="caseTaskPriority" class="iqw-select" aria-label="Priority"><option value="Medium">Medium</option><option value="High">High</option><option value="Low">Low</option></select>
                 <select id="caseTaskSource" class="iqw-select" aria-label="Source"><option value="Manual">Manual</option><option value="Statutory">Statutory</option><option value="SOP">SOP</option></select>
                 <button id="caseTaskAddBtn" class="btn btn-primary" type="button">Add Task</button>
+              </div>
+            </div>
+            <div id="caseTabPlan" class="iqw-tab-panel" role="tabpanel">
+              <div id="casePlanContainer">
+                <div class="notif-empty">
+                  <button id="casePlanGenerateBtn" class="btn btn-primary" type="button">Generate Investigation Plan</button>
+                </div>
               </div>
             </div>
             <div id="caseTabAIQuery" class="iqw-tab-panel" role="tabpanel">
@@ -8041,6 +8051,12 @@
       }
       showToast(files.length + " file" + (files.length === 1 ? "" : "s") + " queued for sync.", "warning");
       renderOfflineUploadQueue();
+      // AC-003-5: Register Background Sync tag for auto-upload
+      if ("serviceWorker" in navigator && navigator.serviceWorker.ready) {
+        navigator.serviceWorker.ready.then(function(reg) {
+          if (reg.sync) reg.sync.register("document-upload").catch(function() { /* fallback to online event */ });
+        });
+      }
     }
 
     async function renderOfflineUploadQueue() {
@@ -8052,16 +8068,38 @@
           offlineUploadQueue.innerHTML = "";
           return;
         }
+        var synced = items.filter(function(i) { return i.status === "Synced"; }).length;
+        var failed = items.filter(function(i) { return i.status === "Failed"; }).length;
+        var totalSize = items.reduce(function(sum, i) { return sum + (i.fileSize || 0); }, 0);
         offlineUploadQueue.classList.remove("mode-hidden");
-        offlineUploadQueue.innerHTML = '<strong>Offline upload queue</strong>' + items.map(function(item) {
-          return '<div class="offline-queue-row">' +
-            '<span title="' + escapeHtml(item.fileName || "") + '">' + escapeHtml(item.fileName || "Document") + '</span>' +
-            '<span>' + escapeHtml(formatBytes(item.fileSize)) + '</span>' +
-            '<span class="offline-queue-status">' + escapeHtml(item.status || "Queued") + '</span>' +
-            '<button class="btn btn-secondary btn-tiny" type="button" data-offline-retry="' + item.id + '">Retry</button>' +
-            (item.error ? '<div class="queue-error">' + escapeHtml(item.error) + '</div>' : '') +
-            '</div>';
-        }).join("");
+        offlineUploadQueue.innerHTML =
+          '<div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);flex-wrap:wrap">' +
+            '<strong>Offline upload queue</strong>' +
+            '<span style="font-size:0.8rem;color:var(--color-text-muted)">' +
+              items.length + ' file' + (items.length === 1 ? '' : 's') +
+              ' · ' + formatBytes(totalSize) +
+              (synced ? ' · ' + synced + ' synced' : '') +
+              (failed ? ' · ' + failed + ' failed' : '') +
+            '</span>' +
+            '<button class="btn btn-secondary btn-tiny" type="button" id="offlineSyncAllBtn">Sync All</button>' +
+          '</div>' +
+          items.map(function(item) {
+            var timeStr = item.createdAt ? new Date(item.createdAt).toLocaleString() : "";
+            var statusClass = item.status === "Failed" ? "color:var(--color-danger)" :
+              item.status === "Synced" ? "color:var(--color-success)" :
+              item.status === "Syncing" ? "color:var(--color-warning)" : "";
+            return '<div class="offline-queue-row">' +
+              '<span title="' + escapeHtml(item.fileName || "") + '">' + escapeHtml(item.fileName || "Document") + '</span>' +
+              '<span style="font-size:0.75rem;color:var(--color-text-muted)">' + escapeHtml(item.documentType || "") + '</span>' +
+              '<span>' + escapeHtml(formatBytes(item.fileSize)) + '</span>' +
+              '<span style="font-size:0.75rem;color:var(--color-text-muted)">' + escapeHtml(timeStr) + '</span>' +
+              '<span class="offline-queue-status" style="' + statusClass + '">' + escapeHtml(item.status || "Queued") + '</span>' +
+              '<button class="btn btn-secondary btn-tiny" type="button" data-offline-retry="' + item.id + '">Retry</button>' +
+              (item.error ? '<div class="queue-error">' + escapeHtml(item.error) + '</div>' : '') +
+              '</div>';
+          }).join("");
+        var syncAllBtn = document.getElementById("offlineSyncAllBtn");
+        if (syncAllBtn) syncAllBtn.addEventListener("click", function() { syncOfflineUploads(); });
         offlineUploadQueue.querySelectorAll("[data-offline-retry]").forEach(function(btn) {
           btn.addEventListener("click", function() {
             syncOfflineUploads(Number(btn.getAttribute("data-offline-retry")));
@@ -11506,6 +11544,15 @@
       syncOfflineUploads();
     }
 
+    // AC-003-5: Listen for Background Sync message from service worker
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("message", function(event) {
+        if (event.data && event.data.type === "sync-offline-uploads") {
+          syncOfflineUploads();
+        }
+      });
+    }
+
     function handleNetworkOffline() {
       state.network.isOnline = false;
       updateConnectivityUI();
@@ -13005,6 +13052,7 @@
           // Load tab data for case detail
           if (targetId === "caseTabTimeline" && state._currentCaseId) loadCaseTimeline();
           if (targetId === "caseTabTasks" && state._currentCaseId) loadCaseTasks();
+          if (targetId === "caseTabPlan" && state._currentCaseId) loadInvestigationPlan();
           if (targetId === "caseTabReadiness" && state._currentCaseId) loadCaseReadiness();
           if (targetId === "adminTabSupport") loadSupportRequests();
           if (targetId === "adminTabAI") loadAIReviewQueue();
@@ -13283,7 +13331,9 @@
     function renderCaseDetail(c) {
       var offenceLabel = c.primary_offence_type_name || c.primary_offence_type_id || c.offence_type || "";
       var caseNumber = c.crime_no || c.petition_no || c.id || "";
-      document.getElementById("caseDetailTitle").textContent = (formatCaseType(c.case_type) || "Case") + (caseNumber ? " — " + caseNumber : "") + (offenceLabel ? " · " + offenceLabel : "");
+      document.getElementById("caseDetailTitle").textContent = (formatCaseType(c.case_type) || "Case") + (caseNumber ? " — " + caseNumber : "");
+      var offenceBadge = document.getElementById("caseDetailOffenceType");
+      if (offenceLabel) { offenceBadge.textContent = offenceLabel; offenceBadge.style.display = "inline-block"; } else { offenceBadge.style.display = "none"; }
       var badge = document.getElementById("caseDetailBadge");
       badge.textContent = CASE_STATUS_LABELS[c.status] || c.status || "Draft";
       badge.className = "status-badge " + getStatusBadgeClass(c.status);
@@ -13318,7 +13368,6 @@
         { label: "Crime No", value: c.crime_no },
         { label: "Petition No", value: c.petition_no },
         { label: "Police Station", value: c.police_station_name || c.police_station_id },
-        { label: "Primary Offence", value: offenceLabel },
         { label: "CCTNS Sync", value: cctnsStatusLabel },
         { label: "Status", value: CASE_STATUS_LABELS[c.status] || c.status },
         { label: "Created", value: c.created_at ? new Date(c.created_at).toLocaleString() : "-" },
@@ -13645,13 +13694,21 @@
         }).join("");
         container.querySelectorAll(".timeline-entry").forEach(function(entry) {
           entry.addEventListener("click", function() {
-            var entityType = entry.getAttribute("data-entity-type");
-            if (entityType === "document") {
+            var entityType = (entry.getAttribute("data-entity-type") || "").toLowerCase();
+            var entityId = entry.getAttribute("data-entity-id") || "";
+            if (entityType === "document" || entityType === "casedocument") {
               closeDocumentViewer();
               loadCaseDocuments();
             } else if (entityType === "task") {
               document.querySelector('[data-tab="caseTabTasks"]').click();
               loadCaseTasks();
+            } else if (entityType === "case" || entityType === "caseintakesuggestion") {
+              document.querySelector('[data-tab="caseTabDetails"]').click();
+            } else if (entityType === "aianalysisresult" || entityType === "quality") {
+              document.querySelector('[data-tab="caseTabReadiness"]').click();
+            } else {
+              // Default: navigate to details tab for unrecognized entity types
+              document.querySelector('[data-tab="caseTabDetails"]').click();
             }
           });
         });
@@ -13750,6 +13807,81 @@
         }
       } catch (_e) {}
     }
+
+    /* ── Investigation Plan (AC-009-7) ── */
+    async function loadInvestigationPlan() {
+      var container = document.getElementById("casePlanContainer");
+      container.innerHTML = '<div class="notif-empty">Loading...</div>';
+      try {
+        var resp = await fetchV1("cases/" + state._currentCaseId + "/investigation-plan");
+        if (resp.status === 404) {
+          container.innerHTML = '<div class="notif-empty"><button id="casePlanGenerateBtn" class="btn btn-primary" type="button">Generate Investigation Plan</button></div>';
+          document.getElementById("casePlanGenerateBtn").addEventListener("click", generateInvestigationPlan);
+          return;
+        }
+        if (!resp.ok) { container.innerHTML = '<div class="notif-empty">Failed to load plan.</div>'; return; }
+        var plan = await resp.json();
+        renderInvestigationPlan(plan, container);
+      } catch (_e) {
+        container.innerHTML = '<div class="notif-empty">Error loading investigation plan.</div>';
+      }
+    }
+
+    async function generateInvestigationPlan() {
+      var container = document.getElementById("casePlanContainer");
+      container.innerHTML = '<div class="notif-empty">Generating plan...</div>';
+      try {
+        var resp = await fetchV1("cases/" + state._currentCaseId + "/investigation-plan", { method: "POST" });
+        if (!resp.ok) { showToast("Failed to generate plan.", "error"); return; }
+        var plan = await resp.json();
+        renderInvestigationPlan(plan, container);
+        showToast("Investigation plan generated.", "success");
+      } catch (_e) {
+        showToast("Error generating plan.", "error");
+      }
+    }
+
+    function renderInvestigationPlan(plan, container) {
+      var steps = plan.investigation_steps || [];
+      var evidence = plan.evidence_to_collect || [];
+      var docs = plan.documents_to_generate || [];
+      var deadlines = plan.statutory_deadlines || [];
+      container.innerHTML =
+        '<div style="padding:var(--space-3)">' +
+          '<h4 style="margin:0 0 var(--space-3)">Investigation Steps</h4>' +
+          steps.map(function(step, idx) {
+            return '<label style="display:flex;align-items:flex-start;gap:var(--space-2);padding:var(--space-2) 0;border-bottom:1px solid var(--color-border);cursor:pointer">' +
+              '<input type="checkbox" data-plan-step="' + idx + '" ' + (step.completed ? 'checked' : '') + ' style="margin-top:3px">' +
+              '<span><strong>' + step.number + '.</strong> ' + escapeHtml(step.step || '') +
+              (step.legal_citation ? ' <em style="color:var(--color-text-muted)">(' + escapeHtml(step.legal_citation) + ')</em>' : '') +
+              '</span></label>';
+          }).join("") +
+          (evidence.length ? '<h4 style="margin:var(--space-4) 0 var(--space-2)">Evidence to Collect</h4>' +
+            evidence.map(function(e) {
+              return '<div style="padding:var(--space-1) 0;font-size:0.85rem">' + escapeHtml(e.item || '') +
+                (e.forensic_requirement ? ' — <em style="color:var(--color-text-muted)">' + escapeHtml(e.forensic_requirement) + '</em>' : '') + '</div>';
+            }).join("") : '') +
+          (docs.length ? '<h4 style="margin:var(--space-4) 0 var(--space-2)">Documents to Generate</h4>' +
+            docs.map(function(d) { return '<div style="padding:var(--space-1) 0;font-size:0.85rem">' + escapeHtml(d) + '</div>'; }).join("") : '') +
+          (deadlines.length ? '<h4 style="margin:var(--space-4) 0 var(--space-2)">Statutory Deadlines</h4>' +
+            deadlines.map(function(dl) {
+              return '<div style="padding:var(--space-1) 0;font-size:0.85rem"><strong>' + escapeHtml(dl.name || '') + '</strong> — ' +
+                escapeHtml(dl.due_date || '') + (dl.countdown_days != null ? ' (' + dl.countdown_days + ' days)' : '') + '</div>';
+            }).join("") : '') +
+        '</div>';
+      container.querySelectorAll("[data-plan-step]").forEach(function(cb) {
+        cb.addEventListener("change", function() {
+          var idx = Number(cb.getAttribute("data-plan-step"));
+          steps[idx].completed = cb.checked;
+          fetchV1("cases/" + state._currentCaseId + "/investigation-plan", {
+            method: "PUT",
+            body: JSON.stringify({ investigation_steps: steps })
+          });
+        });
+      });
+    }
+
+    document.getElementById("casePlanGenerateBtn").addEventListener("click", generateInvestigationPlan);
 
     /* ── Case Form (Wizard) ── */
     var caseFormEditId = null;

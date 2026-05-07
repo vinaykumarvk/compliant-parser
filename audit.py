@@ -7,7 +7,7 @@ import json
 import logging
 import re
 import uuid as _uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import jwt
@@ -392,4 +392,34 @@ async def verify_audit_chain(*, db: AsyncSession) -> dict:
         "legacy_unhashed": legacy_unhashed,
         "first_bad_entry_id": None,
         "reason": None if checked else "no_hashed_audit_entries",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Retention purge (AC-019-5)
+# ---------------------------------------------------------------------------
+
+
+async def purge_expired_audit_logs(*, db: AsyncSession) -> dict:
+    """Delete audit log entries older than the retention period.
+
+    Returns a summary with the count of purged entries.
+    Should be called by a scheduled job (e.g. daily cron / APScheduler).
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=AUDIT_RETENTION_YEARS * 365)
+    stmt = select(sa.func.count()).select_from(AuditLog).where(AuditLog.timestamp < cutoff)
+    result = await db.execute(stmt)
+    count = result.scalar() or 0
+
+    if count > 0:
+        delete_stmt = sa.delete(AuditLog).where(AuditLog.timestamp < cutoff)
+        await db.execute(delete_stmt)
+        await db.flush()
+        logger.info("Purged %d audit log entries older than %s (retention=%d years).",
+                     count, cutoff.isoformat(), AUDIT_RETENTION_YEARS)
+
+    return {
+        "purged": count,
+        "cutoff": cutoff.isoformat(),
+        "retention_years": AUDIT_RETENTION_YEARS,
     }
