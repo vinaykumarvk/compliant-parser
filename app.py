@@ -1220,8 +1220,11 @@ def serve_sw() -> HTMLResponse:
 
 
 @app.get("/", response_class=HTMLResponse)
-def index() -> str:
-    return _INDEX_HTML
+def index() -> HTMLResponse:
+    return HTMLResponse(
+        content=_INDEX_HTML,
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @app.get("/health")
