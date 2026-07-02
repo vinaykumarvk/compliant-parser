@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import base64
 import hashlib
+import hmac
 import io
 import json as _json
 import logging
@@ -23,7 +25,7 @@ from typing import Any, Optional
 import sqlalchemy as sa
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
@@ -1225,6 +1227,53 @@ def index() -> HTMLResponse:
         content=_INDEX_HTML,
         headers={"Cache-Control": "no-cache"},
     )
+
+
+@app.get("/sso")
+async def platform_sso(request: Request, token: str = Query(..., min_length=16, max_length=4096)) -> Response:
+    """Platform launch-token exchange: verifies the policing-platform SSO token
+    (HMAC-SHA256, audience "iqw") and establishes the local session."""
+    secret = os.environ.get("PLATFORM_SSO_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="Platform SSO is not enabled.")
+    payload = _verify_platform_sso_token(token, secret)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="Launch token is invalid or expired.")
+    request.session.clear()
+    request.session[_AUTH_SESSION_USER_KEY] = str(_AUTH_CONFIG["username"])
+    logger.info(
+        "platform SSO login: subject=%s tenant=%s", payload.get("u"), payload.get("t")
+    )
+    return RedirectResponse(url="/", status_code=302)
+
+
+def _verify_platform_sso_token(token: str, secret: str) -> dict | None:
+    dot = token.rfind(".")
+    if dot <= 0:
+        return None
+    payload_b64, signature = token[:dot], token[dot + 1 :]
+    expected = (
+        base64.urlsafe_b64encode(
+            hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).digest()
+        )
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+        payload = _json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("a") != "iqw":
+        return None
+    expiry = payload.get("e")
+    if not isinstance(expiry, (int, float)) or expiry <= time.time() * 1000:
+        return None
+    return payload
 
 
 @app.get("/health")
