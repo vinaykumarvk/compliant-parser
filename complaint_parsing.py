@@ -41,6 +41,7 @@ _LANGUAGE_NAMES = {
     "hi": "Hindi",
     "ur": "Urdu",
     "te": "Telugu",
+    "ml": "Malayalam",
     "unknown": "Unknown",
 }
 _BNS_REFERENCE_URL = "https://www.indiacode.nic.in/handle/123456789/20062?view_type=browse"
@@ -798,6 +799,7 @@ _OCR_GREEK_NOISE = re.compile(r"[\u0370-\u03FF\u1F00-\u1FFF]+")
 _SOURCE_LANGUAGE_SCRIPT_CLASS = (
     "\u0900-\u097F"
     "\u0C00-\u0C7F"
+    "\u0D00-\u0D7F"
     "\u0600-\u06FF"
     "\u0750-\u077F"
     "\u08A0-\u08FF"
@@ -811,6 +813,7 @@ _OCR_EXCESSIVE_PUNCTUATION = re.compile(r"([.!?,;:\-])\1{4,}")
 _LANGUAGE_SCRIPT_RANGES = {
     "hi": [(0x0900, 0x097F)],
     "te": [(0x0C00, 0x0C7F)],
+    "ml": [(0x0D00, 0x0D7F)],
     "ur": [
         (0x0600, 0x06FF),
         (0x0750, 0x077F),
@@ -838,9 +841,9 @@ def _clean_ocr_noise(text: str, detected_language: str) -> str:
     # Remove Greek letters — common OCR misrecognitions of Telugu glyphs
     cleaned = _OCR_GREEK_NOISE.sub("", cleaned)
 
-    # For Telugu/Hindi/Urdu: remove isolated 1-2 char Latin fragments between source-script chars
+    # For Telugu/Hindi/Urdu/Malayalam: remove isolated 1-2 char Latin fragments between source-script chars
     # Preserve English words >= 3 chars (names, dates, "Police Station")
-    if detected_language in ("te", "hi", "ur"):
+    if detected_language in ("te", "hi", "ur", "ml"):
         cleaned = _OCR_ISOLATED_LATIN.sub(" ", cleaned)
 
     # Collapse excessive repeated punctuation (5+ → 3)
@@ -1824,7 +1827,7 @@ def _strip_reporting_prefix(value: str) -> str:
 
 
 def _detect_language(text: str) -> dict[str, Any]:
-    counts = {"en": 0, "hi": 0, "ur": 0, "te": 0}
+    counts = {"en": 0, "hi": 0, "ur": 0, "te": 0, "ml": 0}
     for char in text or "":
         codepoint = ord(char)
         if 0x0900 <= codepoint <= 0x097F:
@@ -1839,6 +1842,8 @@ def _detect_language(text: str) -> dict[str, Any]:
             counts["ur"] += 1
         elif 0x0C00 <= codepoint <= 0x0C7F:
             counts["te"] += 1
+        elif 0x0D00 <= codepoint <= 0x0D7F:
+            counts["ml"] += 1
         elif char.isascii() and char.isalpha():
             counts["en"] += 1
 
@@ -1854,9 +1859,9 @@ def _detect_language(text: str) -> dict[str, Any]:
     dominant = max(counts, key=lambda k: counts[k])
     dominant_share = counts[dominant] / total
     language_code = dominant if dominant_share >= 0.45 else "unknown"
-    strongest_non_english = max(("hi", "ur", "te"), key=lambda k: counts[k])
+    strongest_non_english = max(("hi", "ur", "te", "ml"), key=lambda k: counts[k])
     strongest_non_english_count = counts[strongest_non_english]
-    if dominant in {"hi", "ur", "te"} and counts[dominant] >= 6:
+    if dominant in {"hi", "ur", "te", "ml"} and counts[dominant] >= 6:
         language_code = dominant
     elif dominant == "en":
         # OCR output for Telugu/Hindi/Urdu complaints often contains many noisy Latin

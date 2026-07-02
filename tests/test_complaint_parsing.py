@@ -350,6 +350,20 @@ class ComplaintParsingTests(unittest.TestCase):
         self.assertEqual(language["counts"]["te"], 612)
         self.assertEqual(language["counts"]["en"], 617)
 
+    def test_detects_malayalam_complaint_with_latin_fragments(self) -> None:
+        sample = (
+            "തീയതി: 02.07.2026\n"
+            "സ്റ്റേഷൻ ഹൗസ് ഓഫീസർ, എറണാകുളം സെൻട്രൽ പോലീസ് സ്റ്റേഷൻ\n"
+            "ഞാൻ എറണാകുളം ജില്ലയിലെ കലൂരിൽ താമസിക്കുന്ന രമേശ് കുമാർ ആണ്. "
+            "വാഹനത്തിന്റെ നമ്പർ KL-07-AX-1234 ആണെന്ന് മനസ്സിലാക്കാൻ കഴിഞ്ഞു.\n"
+            "Phone: 94470 12345"
+        )
+
+        language = _detect_language(sample)
+
+        self.assertEqual(language["language_code"], "ml")
+        self.assertGreater(language["counts"]["ml"], 20)
+
     def test_detects_urdu_and_extracts_urdu_ocr_lines(self) -> None:
         sample = (
             "To Station House Officer\n"
